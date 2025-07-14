@@ -35,6 +35,22 @@ type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) 
     member this.GetDocument (u: string) =
         this.GetDocumentForUriOfType AnyDocument u |> Option.map fst
 
+    // Get all available solutions (main solution + lazy-loaded solutions)
+    member _.GetAllSolutions () : Solution list =
+        let mainSolutions = 
+            match solutionMaybe with
+            | Some solution -> [solution]
+            | None -> []
+        
+        let lazySolutions = 
+            state.Solutions
+            |> Map.toSeq
+            |> Seq.map (fun (_, solutionInfo) -> solutionInfo.Solution)
+            |> List.ofSeq
+        
+        mainSolutions @ lazySolutions
+        |> List.distinctBy (fun s -> s.FilePath)  // Avoid duplicates if main solution is also in lazy solutions
+
     member _.Emit ev =
         match ev with
         | SolutionChange newSolution ->

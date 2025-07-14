@@ -737,13 +737,60 @@ let tryAddDocument (logger: ILog)
 
         | None -> async {
             logger.trace (
-                Log.setMessage "No parent project could be resolved to add file \"{file}\" to workspace"
+                Log.setMessage "No parent project could be resolved to add file \"{file}\" to workspace in solution \"{solutionPath}\""
                 >> Log.addContext "file" docFilePath
+                >> Log.addContext "solutionPath" (if isNull solution.FilePath then "Unknown" else solution.FilePath)
             )
             return None
           }
 
     return newDocumentMaybe
+  }
+
+let tryAddDocumentToAnySolution (logger: ILog)
+                                (docFilePath: string)
+                                (text: string)
+                                (solutions: Solution list)
+                                : Async<Document option> =
+  async {
+    let docDir = Path.GetDirectoryName(docFilePath)
+
+    let fileOnProjectDir (p: Project) =
+        let projectDir = Path.GetDirectoryName(p.FilePath)
+        let projectDirWithDirSepChar = projectDir + (string Path.DirectorySeparatorChar)
+
+        (docDir = projectDir) || docDir.StartsWith(projectDirWithDirSepChar)
+
+    // Try to find a project in any of the available solutions
+    let projectOnPath =
+        solutions
+        |> Seq.collect (fun solution -> solution.Projects)
+        |> Seq.filter fileOnProjectDir
+        |> Seq.tryHead
+
+    match projectOnPath with
+    | Some proj ->
+        let projectBaseDir = Path.GetDirectoryName(proj.FilePath)
+        let docName = docFilePath.Substring(projectBaseDir.Length+1)
+
+        logger.info (
+            Log.setMessage "Adding \"{docName}\" (\"{file}\") to project {projectPath} in solution {solutionPath}"
+            >> Log.addContext "docName" docName
+            >> Log.addContext "file" docFilePath
+            >> Log.addContext "projectPath" proj.FilePath
+            >> Log.addContext "solutionPath" (if isNull proj.Solution.FilePath then "Unknown" else proj.Solution.FilePath)
+        )
+
+        let newDoc = proj.AddDocument(name=docName, text=SourceText.From(text), folders=null, filePath=docFilePath)
+        return Some newDoc
+
+    | None ->
+        logger.trace (
+            Log.setMessage "No parent project could be resolved to add file \"{file}\" to workspace across {solutionCount} loaded solution(s)"
+            >> Log.addContext "file" docFilePath
+            >> Log.addContext "solutionCount" solutions.Length
+        )
+        return None
   }
 
 let makeDocumentFromMetadata

@@ -141,8 +141,15 @@ type ServerStateEvent =
 
 
 let findSolutionPathForDocument (rootPath: string) (documentPath: string): string option =
+    let logger = LogProvider.getLoggerByName "findSolutionPathForDocument"
+    
     let rec searchForSolution currentDir =
         if String.IsNullOrEmpty(currentDir) || not (currentDir.StartsWith(rootPath)) then
+            logger.trace (
+                Log.setMessage "Reached root boundary searching for solution. currentDir: {currentDir}, rootPath: {rootPath}"
+                >> Log.addContext "currentDir" currentDir
+                >> Log.addContext "rootPath" rootPath
+            )
             None
         else
             let solutionFiles = 
@@ -151,18 +158,59 @@ let findSolutionPathForDocument (rootPath: string) (documentPath: string): strin
                     try
                         Directory.GetFiles(currentDir, pattern) |> List.ofArray
                     with
-                    | _ -> [])
+                    | ex ->
+                        logger.warn (
+                            Log.setMessage "Error searching for solution files in {directory}: {error}"
+                            >> Log.addContext "directory" currentDir
+                            >> Log.addContext "pattern" pattern
+                            >> Log.addContext "error" (string ex)
+                        )
+                        [])
+            
+            logger.trace (
+                Log.setMessage "Found {count} solution file(s) in {directory}: {files}"
+                >> Log.addContext "count" solutionFiles.Length
+                >> Log.addContext "directory" currentDir
+                >> Log.addContext "files" (String.Join(", ", solutionFiles))
+            )
             
             match solutionFiles with
-            | [solutionFile] -> Some solutionFile
-            | _ ->
+            | [solutionFile] -> 
+                logger.info (
+                    Log.setMessage "Found single solution file for document {documentPath}: {solutionFile}"
+                    >> Log.addContext "documentPath" documentPath
+                    >> Log.addContext "solutionFile" solutionFile
+                )
+                Some solutionFile
+            | multiple when multiple.Length > 1 ->
+                // Multiple solutions found - prefer the one with the most relevant name or use the first one
+                logger.info (
+                    Log.setMessage "Found {count} solution files for document {documentPath} in {directory}. Using first one: {selectedSolution}"
+                    >> Log.addContext "count" multiple.Length
+                    >> Log.addContext "documentPath" documentPath
+                    >> Log.addContext "directory" currentDir
+                    >> Log.addContext "selectedSolution" multiple.Head
+                    >> Log.addContext "allSolutions" (String.Join(", ", multiple))
+                )
+                Some multiple.Head
+            | [] ->
                 let parentDir = Path.GetDirectoryName(currentDir)
                 if parentDir = currentDir then
+                    logger.trace (
+                        Log.setMessage "No solution files found, reached filesystem root for document {documentPath}"
+                        >> Log.addContext "documentPath" documentPath
+                    )
                     None
                 else
                     searchForSolution parentDir
     
     let documentDir = Path.GetDirectoryName(documentPath)
+    logger.info (
+        Log.setMessage "Searching for solution file for document {documentPath} starting from {documentDir}"
+        >> Log.addContext "documentPath" documentPath
+        >> Log.addContext "documentDir" documentDir
+    )
+    
     searchForSolution documentDir
 
 let getDocumentForUriOfType state docType (u: string) =
@@ -343,24 +391,76 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
         let docFilePathMaybe = tryParseFileUri documentUri
         match docFilePathMaybe with
         | Some docFilePath ->
+            logger.info (
+                Log.setMessage "Attempting lazy load of solution for document {documentUri} ({docFilePath})"
+                >> Log.addContext "documentUri" documentUri
+                >> Log.addContext "docFilePath" docFilePath
+            )
+            
             let solutionPathMaybe = findSolutionPathForDocument state.RootPath docFilePath
             match solutionPathMaybe with
             | Some solutionPath when not (state.Solutions.ContainsKey solutionPath) ->
+                logger.info (
+                    Log.setMessage "Found solution to lazy load: {solutionPath} for document {documentUri}"
+                    >> Log.addContext "solutionPath" solutionPath
+                    >> Log.addContext "documentUri" documentUri
+                )
+                
                 // Load the solution asynchronously
                 async {
-                    match state.LspClient with
-                    | Some lspClient ->
-                        let! solutionMaybe = tryLoadSolutionOnPath lspClient logger solutionPath
-                        match solutionMaybe with
-                        | Some solution ->
-                            postSelf (SolutionAdd (solutionPath, solution))
-                        | None -> ()
-                    | None -> ()
+                    try
+                        match state.LspClient with
+                        | Some lspClient ->
+                            let! solutionMaybe = tryLoadSolutionOnPath lspClient logger solutionPath
+                            match solutionMaybe with
+                            | Some solution ->
+                                logger.info (
+                                    Log.setMessage "Successfully lazy loaded solution {solutionPath} for document {documentUri}"
+                                    >> Log.addContext "solutionPath" solutionPath
+                                    >> Log.addContext "documentUri" documentUri
+                                )
+                                postSelf (SolutionAdd (solutionPath, solution))
+                            | None -> 
+                                logger.warn (
+                                    Log.setMessage "Failed to lazy load solution {solutionPath} for document {documentUri}"
+                                    >> Log.addContext "solutionPath" solutionPath
+                                    >> Log.addContext "documentUri" documentUri
+                                )
+                        | None -> 
+                            logger.error (
+                                Log.setMessage "No LSP client available for lazy loading solution {solutionPath}"
+                                >> Log.addContext "solutionPath" solutionPath
+                            )
+                    with
+                    | ex ->
+                        logger.error (
+                            Log.setMessage "Exception during lazy loading of solution {solutionPath} for document {documentUri}: {error}"
+                            >> Log.addContext "solutionPath" solutionPath
+                            >> Log.addContext "documentUri" documentUri
+                            >> Log.addContext "error" (string ex)
+                        )
                 } |> Async.Start
                 return state
-            | _ ->
+            | Some solutionPath ->
+                logger.trace (
+                    Log.setMessage "Solution {solutionPath} already loaded for document {documentUri}"
+                    >> Log.addContext "solutionPath" solutionPath
+                    >> Log.addContext "documentUri" documentUri
+                )
+                return state
+            | None ->
+                logger.warn (
+                    Log.setMessage "No solution file found for document {documentUri} in workspace root {rootPath}"
+                    >> Log.addContext "documentUri" documentUri
+                    >> Log.addContext "docFilePath" docFilePath
+                    >> Log.addContext "rootPath" state.RootPath
+                )
                 return state
         | None ->
+            logger.warn (
+                Log.setMessage "Could not parse document URI for lazy loading: {documentUri}"
+                >> Log.addContext "documentUri" documentUri
+            )
             return state
 
     | DecompiledMetadataAdd (uri, md) ->

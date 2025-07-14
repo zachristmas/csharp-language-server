@@ -146,12 +146,13 @@ module TextDocumentSync =
                     context.Emit(SolutionChange updatedDoc.Project.Solution)
                 | _ ->
                     // Document still not in any solution, try to add it manually
+                    let allSolutions = context.GetAllSolutions()
                     let! newDocMaybe =
-                        tryAddDocument
+                        tryAddDocumentToAnySolution
                             logger
                             docFilePath
                             openParams.TextDocument.Text
-                            context.Solution
+                            allSolutions
 
                     match newDocMaybe with
                     | Some newDoc ->
@@ -219,12 +220,13 @@ module TextDocumentSync =
 
         | None -> async {
             let docFilePath = Util.parseFileUri saveParams.TextDocument.Uri
+            let allSolutions = context.GetAllSolutions()
             let! newDocMaybe =
-                tryAddDocument
+                tryAddDocumentToAnySolution
                     logger
                     docFilePath
                     saveParams.Text.Value
-                    context.Solution
+                    allSolutions
 
             match newDocMaybe with
             | Some newDoc ->
