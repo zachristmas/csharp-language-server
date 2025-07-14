@@ -143,12 +143,26 @@ type ServerStateEvent =
 let findSolutionPathForDocument (rootPath: string) (documentPath: string): string option =
     let logger = LogProvider.getLoggerByName "findSolutionPathForDocument"
     
+    // Normalize paths to ensure consistent comparison
+    let normalizeWindowsPath (path: string) =
+        if path.StartsWith("\\") && path.Length > 3 && path.[2] = ':' then
+            // Convert \c:\path to c:\path
+            path.Substring(1)
+        else
+            path
+    
+    let normalizedRootPath = Path.GetFullPath(rootPath).Replace('/', '\\')
+    
     let rec searchForSolution currentDir =
-        if String.IsNullOrEmpty(currentDir) || not (currentDir.StartsWith(rootPath)) then
+        let normalizedCurrentDir = normalizeWindowsPath currentDir
+        
+        if String.IsNullOrEmpty(normalizedCurrentDir) || not (normalizedCurrentDir.StartsWith(normalizedRootPath, StringComparison.OrdinalIgnoreCase)) then
             logger.trace (
-                Log.setMessage "Reached root boundary searching for solution. currentDir: {currentDir}, rootPath: {rootPath}"
+                Log.setMessage "Reached root boundary searching for solution. currentDir: {currentDir}, normalizedCurrentDir: {normalizedCurrentDir}, rootPath: {rootPath}, normalizedRootPath: {normalizedRootPath}"
                 >> Log.addContext "currentDir" currentDir
+                >> Log.addContext "normalizedCurrentDir" normalizedCurrentDir
                 >> Log.addContext "rootPath" rootPath
+                >> Log.addContext "normalizedRootPath" normalizedRootPath
             )
             None
         else
@@ -156,12 +170,12 @@ let findSolutionPathForDocument (rootPath: string) (documentPath: string): strin
                 [ "*.sln"; "*.slnx" ]
                 |> List.collect(fun pattern -> 
                     try
-                        Directory.GetFiles(currentDir, pattern) |> List.ofArray
+                        Directory.GetFiles(normalizedCurrentDir, pattern) |> List.ofArray
                     with
                     | ex ->
                         logger.warn (
                             Log.setMessage "Error searching for solution files in {directory}: {error}"
-                            >> Log.addContext "directory" currentDir
+                            >> Log.addContext "directory" normalizedCurrentDir
                             >> Log.addContext "pattern" pattern
                             >> Log.addContext "error" (string ex)
                         )
@@ -170,14 +184,14 @@ let findSolutionPathForDocument (rootPath: string) (documentPath: string): strin
             logger.trace (
                 Log.setMessage "Found {count} solution file(s) in {directory}: {files}"
                 >> Log.addContext "count" solutionFiles.Length
-                >> Log.addContext "directory" currentDir
+                >> Log.addContext "directory" normalizedCurrentDir
                 >> Log.addContext "files" (String.Join(", ", solutionFiles))
             )
             
             match solutionFiles with
             | [] ->
-                let parentDir = Path.GetDirectoryName(currentDir)
-                if parentDir = currentDir then
+                let parentDir = Path.GetDirectoryName(normalizedCurrentDir)
+                if parentDir = normalizedCurrentDir then
                     logger.trace (
                         Log.setMessage "No solution files found, reached filesystem root for document {documentPath}"
                         >> Log.addContext "documentPath" documentPath
@@ -198,7 +212,7 @@ let findSolutionPathForDocument (rootPath: string) (documentPath: string): strin
                     Log.setMessage "Found {count} solution files for document {documentPath} in {directory}. Using first one: {selectedSolution}"
                     >> Log.addContext "count" multiple.Length
                     >> Log.addContext "documentPath" documentPath
-                    >> Log.addContext "directory" currentDir
+                    >> Log.addContext "directory" normalizedCurrentDir
                     >> Log.addContext "selectedSolution" multiple.Head
                     >> Log.addContext "allSolutions" (String.Join(", ", multiple))
                 )
