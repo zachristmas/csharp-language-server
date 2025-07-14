@@ -13,6 +13,7 @@ open CSharpLanguageServer.RoslynHelpers
 open CSharpLanguageServer.Types
 open CSharpLanguageServer.Logging
 open CSharpLanguageServer.Conversions
+open CSharpLanguageServer.Util
 
 type DecompiledMetadataDocument = {
     Metadata: CSharpMetadataInformation
@@ -21,10 +22,18 @@ type DecompiledMetadataDocument = {
 
 type ServerRequestType = ReadOnly | ReadWrite
 
+type SolutionInfo = {
+    Solution: Solution
+    SolutionPath: string
+    LastAccessed: DateTime
+    ProjectPaths: Set<string>
+}
+
 type ServerOpenDocInfo =
     {
         Version: int
         Touched: DateTime
+        SolutionPath: string option  // Track which solution this document belongs to
     }
 
 type ServerRequest = {
@@ -41,7 +50,8 @@ and ServerState = {
     RootPath: string
     LspClient: ILspClient option
     ClientCapabilities: ClientCapabilities
-    Solution: Solution option
+    Solution: Solution option  // Keep for backward compatibility
+    Solutions: Map<string, SolutionInfo>  // Map of solution path to solution info
     OpenDocs: Map<string, ServerOpenDocInfo>
     DecompiledMetadata: Map<string, DecompiledMetadataDocument>
     LastRequestId: int
@@ -87,6 +97,7 @@ let emptyServerState = { Settings = ServerSettings.Default
                          LspClient = None
                          ClientCapabilities = emptyClientCapabilities
                          Solution = None
+                         Solutions = Map.empty
                          OpenDocs = Map.empty
                          DecompiledMetadata = Map.empty
                          LastRequestId = 0
@@ -109,6 +120,10 @@ type ServerStateEvent =
     | ClientChange of ILspClient option
     | ClientCapabilityChange of ClientCapabilities
     | SolutionChange of Solution
+    | SolutionAdd of string * Solution  // Add a new solution with its path
+    | SolutionRemove of string  // Remove a solution by path
+    | SolutionAccessUpdate of string * DateTime  // Update last accessed time
+    | LazyLoadSolutionForDocument of string  // Load solution for a specific document URI
     | DecompiledMetadataAdd of string * DecompiledMetadataDocument
     | OpenDocAdd of string * int * DateTime
     | OpenDocRemove of string
@@ -125,30 +140,76 @@ type ServerStateEvent =
     | PeriodicTimerTick
 
 
+let findSolutionPathForDocument (rootPath: string) (documentPath: string): string option =
+    let rec searchForSolution currentDir =
+        if String.IsNullOrEmpty(currentDir) || not (currentDir.StartsWith(rootPath)) then
+            None
+        else
+            let solutionFiles = 
+                [ "*.sln"; "*.slnx" ]
+                |> List.collect(fun pattern -> 
+                    try
+                        Directory.GetFiles(currentDir, pattern) |> List.ofArray
+                    with
+                    | _ -> [])
+            
+            match solutionFiles with
+            | [solutionFile] -> Some solutionFile
+            | _ ->
+                let parentDir = Path.GetDirectoryName(currentDir)
+                if parentDir = currentDir then
+                    None
+                else
+                    searchForSolution parentDir
+    
+    let documentDir = Path.GetDirectoryName(documentPath)
+    searchForSolution documentDir
+
 let getDocumentForUriOfType state docType (u: string) =
     let uri = Uri(u.Replace("%3A", ":", true, null))
 
-    match state.Solution with
-    | Some solution ->
-        let matchingUserDocuments =
-            solution.Projects
-            |> Seq.collect (fun p -> p.Documents)
-            |> Seq.filter (fun d -> Uri(d.FilePath, UriKind.Absolute) = uri) |> List.ofSeq
+    // First check the main solution for backward compatibility
+    let mainSolutionDoc = 
+        match state.Solution with
+        | Some solution ->
+            let matchingUserDocuments =
+                solution.Projects
+                |> Seq.collect (fun p -> p.Documents)
+                |> Seq.filter (fun d -> Uri(d.FilePath, UriKind.Absolute) = uri) |> List.ofSeq
 
-        let matchingUserDocumentMaybe =
             match matchingUserDocuments with
             | [d] -> Some (d, UserDocument)
             | _ -> None
+        | None -> None
 
-        let matchingDecompiledDocumentMaybe =
-            Map.tryFind u state.DecompiledMetadata
-            |> Option.map (fun x -> (x.Document, DecompiledDocument))
+    // Then check all lazy-loaded solutions
+    let lazyLoadedSolutionDoc =
+        if Option.isNone mainSolutionDoc then
+            state.Solutions
+            |> Map.toSeq
+            |> Seq.map snd
+            |> Seq.tryPick (fun solutionInfo ->
+                let matchingUserDocuments =
+                    solutionInfo.Solution.Projects
+                    |> Seq.collect (fun p -> p.Documents)
+                    |> Seq.filter (fun d -> Uri(d.FilePath, UriKind.Absolute) = uri) |> List.ofSeq
 
-        match docType with
-        | UserDocument -> matchingUserDocumentMaybe
-        | DecompiledDocument -> matchingDecompiledDocumentMaybe
-        | AnyDocument -> matchingUserDocumentMaybe |> Option.orElse matchingDecompiledDocumentMaybe
-    | None -> None
+                match matchingUserDocuments with
+                | [d] -> Some (d, UserDocument)
+                | _ -> None)
+        else 
+            None
+
+    let userDocumentMaybe = mainSolutionDoc |> Option.orElse lazyLoadedSolutionDoc
+
+    let matchingDecompiledDocumentMaybe =
+        Map.tryFind u state.DecompiledMetadata
+        |> Option.map (fun x -> (x.Document, DecompiledDocument))
+
+    match docType with
+    | UserDocument -> userDocumentMaybe
+    | DecompiledDocument -> matchingDecompiledDocumentMaybe
+    | AnyDocument -> userDocumentMaybe |> Option.orElse matchingDecompiledDocumentMaybe
 
 let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = async {
     match msg with
@@ -248,6 +309,60 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
         postSelf PushDiagnosticsDocumentBacklogUpdate
         return { state with Solution = Some s }
 
+    | SolutionAdd (solutionPath, solution) ->
+        let projectPaths = 
+            solution.Projects
+            |> Seq.map (fun p -> p.FilePath)
+            |> Set.ofSeq
+
+        let solutionInfo = {
+            Solution = solution
+            SolutionPath = solutionPath
+            LastAccessed = DateTime.Now
+            ProjectPaths = projectPaths
+        }
+
+        let newSolutions = state.Solutions |> Map.add solutionPath solutionInfo
+        postSelf PushDiagnosticsDocumentBacklogUpdate
+        return { state with Solutions = newSolutions }
+
+    | SolutionRemove solutionPath ->
+        let newSolutions = state.Solutions |> Map.remove solutionPath
+        return { state with Solutions = newSolutions }
+
+    | SolutionAccessUpdate (solutionPath, accessTime) ->
+        match state.Solutions |> Map.tryFind solutionPath with
+        | Some solutionInfo ->
+            let updatedSolutionInfo = { solutionInfo with LastAccessed = accessTime }
+            let newSolutions = state.Solutions |> Map.add solutionPath updatedSolutionInfo
+            return { state with Solutions = newSolutions }
+        | None ->
+            return state
+
+    | LazyLoadSolutionForDocument documentUri ->
+        let docFilePathMaybe = tryParseFileUri documentUri
+        match docFilePathMaybe with
+        | Some docFilePath ->
+            let solutionPathMaybe = findSolutionPathForDocument state.RootPath docFilePath
+            match solutionPathMaybe with
+            | Some solutionPath when not (state.Solutions.ContainsKey solutionPath) ->
+                // Load the solution asynchronously
+                async {
+                    match state.LspClient with
+                    | Some lspClient ->
+                        let! solutionMaybe = tryLoadSolutionOnPath lspClient logger solutionPath
+                        match solutionMaybe with
+                        | Some solution ->
+                            postSelf (SolutionAdd (solutionPath, solution))
+                        | None -> ()
+                    | None -> ()
+                } |> Async.Start
+                return state
+            | _ ->
+                return state
+        | None ->
+            return state
+
     | DecompiledMetadataAdd (uri, md) ->
         let newDecompiledMd = Map.add uri md state.DecompiledMetadata
         return { state with DecompiledMetadata = newDecompiledMd }
@@ -255,8 +370,40 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
     | OpenDocAdd (doc, ver, timestamp) ->
         postSelf PushDiagnosticsDocumentBacklogUpdate
 
-        let openDocInfo = { Version = ver
-                            Touched = timestamp }
+        // Try to find which solution this document belongs to
+        let docFilePathMaybe = tryParseFileUri doc
+        let solutionPathMaybe = 
+            match docFilePathMaybe with
+            | Some docFilePath ->
+                // First check if document exists in any loaded solution
+                let existingDoc = getDocumentForUriOfType state UserDocument doc
+                match existingDoc with
+                | Some _ ->
+                    // Document is already in a loaded solution, find which one
+                    state.Solutions
+                    |> Map.tryPick (fun solutionPath solutionInfo ->
+                        let hasDocument = 
+                            solutionInfo.Solution.Projects
+                            |> Seq.collect (fun p -> p.Documents)
+                            |> Seq.exists (fun d -> d.FilePath = docFilePath)
+                        if hasDocument then Some solutionPath else None)
+                | None ->
+                    // Document not in any loaded solution, try to find solution to load
+                    let solutionPath = findSolutionPathForDocument state.RootPath docFilePath
+                    match solutionPath with
+                    | Some path when not (state.Solutions.ContainsKey path) ->
+                        // Trigger lazy loading
+                        postSelf (LazyLoadSolutionForDocument doc)
+                        solutionPath
+                    | _ -> solutionPath
+            | None -> None
+
+        let openDocInfo = { 
+            Version = ver
+            Touched = timestamp 
+            SolutionPath = solutionPathMaybe
+        }
+        
         let newOpenDocs = state.OpenDocs |> Map.add doc openDocInfo
         return { state with OpenDocs = newOpenDocs }
 
@@ -403,15 +550,21 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
 
         match solutionReloadTime < DateTime.Now with
         | true ->
-            let! newSolution =
-                loadSolutionOnSolutionPathOrDir
-                    state.LspClient.Value
-                    logger
-                    state.Settings.SolutionPath
-                    state.RootPath
+            match state.Settings.SolutionPath with
+            | Some _ ->
+                // Only reload if a solution was explicitly configured
+                let! newSolution =
+                    loadSolutionOnSolutionPathOrDir
+                        state.LspClient.Value
+                        logger
+                        state.Settings.SolutionPath
+                        state.RootPath
 
-            return { state with Solution = newSolution
-                                SolutionReloadPending = None }
+                return { state with Solution = newSolution
+                                    SolutionReloadPending = None }
+            | None ->
+                // No explicit solution configured, rely on lazy loading
+                return { state with SolutionReloadPending = None }
 
         | false ->
             return state

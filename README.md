@@ -1,118 +1,86 @@
-# Description
-This is a hacky Roslyn-based LSP server for C#, as an alternative to 
-[omnisharp-roslyn](https://github.com/OmniSharp/omnisharp-roslyn).
+# C# Language Server - VS 2022 Enhanced Fork
 
-`csharp-ls` requires .NET 8 SDK to be installed. However it has been reported
-to work with projects using older versions of dotnet SDK, including .NET Core 3, 
-.NET Framework 4.8 and possibly older ones too as it uses the standard
-Roslyn/MSBuild libs that Visual Studio & omnisharp does.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![.NET 9](https://img.shields.io/badge/.NET-9.0-purple.svg)](https://dotnet.microsoft.com/)
+[![Visual Studio 2022](https://img.shields.io/badge/VS-2022-blue.svg)](https://visualstudio.microsoft.com/)
 
-See [CHANGELOG.md](CHANGELOG.md) for the list of recent improvements/fixes.
+**Enhanced by Zach Christmas** | **Original by Saulius Menkevičius**
 
-# Acknowledgements
-- csharp-ls is not affiliated with Microsoft Corp;
-- csharp-ls uses LSP interface from [Ionide.LanguageServerProtocol](https://github.com/ionide/LanguageServerProtocol);
-- csharp-ls uses [Roslyn](https://github.com/dotnet/roslyn) to parse and update code; Roslyn maps really nicely to LSP w/relatively little impedance mismatch;
-- csharp-ls uses [ILSpy/ICSharpCode.Decompiler](https://github.com/icsharpcode/ILSpy) to decompile types in assemblies to C# source.
+This is a fork of the excellent [csharp-language-server](https://github.com/razzmatazz/csharp-language-server) project with enhancements for Visual Studio 2022 MSBuild support and lazy solution loading.
 
-# Installation
-`dotnet tool install --global csharp-ls`
+## 🚀 What's New in This Fork
 
-See [csharp-ls nuget page](https://www.nuget.org/packages/csharp-ls/)
+### Visual Studio 2022 MSBuild Support
+- ✅ **Automatic detection** of VS 2022 Community/Professional installations
+- ✅ **Environment variable integration** (`VS170COMNTOOLS` support)
+- ✅ **Custom MSBuild path configuration** options
+- ✅ **Intelligent fallback** to auto-discovery
 
-# Settings
+### Lazy Solution Loading
+- ⚡ **On-demand loading** - solutions load only when you open C# files
+- 🚀 **Improved startup performance** - no more waiting for all solutions to load
+- 🎯 **Multi-solution support** - handle complex workspaces efficiently
+- 💾 **Memory optimization** - only loads what you're actively working on
 
-- `csharp.solution` - solution to load, optional
-- `csharp.applyFormattingOptions` - use formatting options as supplied by the client (may override `.editorconfig` values), defaults to `false`
+## 📦 Installation
 
-# Clients
+```bash
+# Install as global .NET tool
+dotnet tool install --global csharp-ls
 
-`csharp-ls` implements the standard LSP protocol to interact with your editor.
-However there are some features that need a non-standard implementation and this
-is where editor-specific plugins can be helpful.
-
-## Emacs
-### emacs/lsp-mode
-Supports automatic installation, go-to-metatada (can view code from nuget/compiled dlls)
-and some additional features.
-
-See [emacs/lsp-mode](https://github.com/emacs-lsp/lsp-mode).
-
-## Visual Studio Code
-### vytautassurvila/vscode-csharp-ls
-- Supports code decompilation from metadata
-
-See [csharp-ls](https://marketplace.visualstudio.com/items?itemName=vytautassurvila.csharp-ls) and [vscode-csharp-ls @ github](https://github.com/vytautassurvila/vscode-csharp-ls).
-
-### statiolake/vscode-csharp-ls
-See [vscode-csharp-ls](https://marketplace.visualstudio.com/items?itemName=statiolake.vscode-csharp-ls).
-
-# Building
-
-## On Linux/macOS
-
-```
-$ dotnet build
+# Verify installation
+csharp-ls --version
 ```
 
-# FAQ
+## ⚙️ Usage
 
-## decompile for your editor , with the example of neovim
+### Command Line Options
+```bash
+# Basic usage
+csharp-ls
 
-### api
+# With specific solution
+csharp-ls --solution MySolution.sln
 
-The api is "csharp/metadata", in neovim ,you can request it like
+# With custom MSBuild path (VS 2022 Community)
+csharp-ls --msbuildpath "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin"
 
-```lua 
-  local result, err = client.request_sync("csharp/metadata", params, 10000)
+# With custom MSBuild executable
+csharp-ls --msbuildexepath "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
 ```
 
-#### sender
-You need to send a uri, it is like 
+### VS Code Integration
+Use with the companion VS Code extension: [csharp-ls (VS 2022 Fork)](https://marketplace.visualstudio.com/items?itemName=zachchristmas.csharp-ls)
 
-**csharp:/metadata/projects/trainning2/assemblies/System.Console/symbols/System.Console.cs**
+## 🛠️ Requirements
 
-In neovim, it will be result(s) from vim.lsp.handles["textDocument/definition"]
+- **.NET 9.0 SDK** or later
+- **Visual Studio 2022** Community/Professional (recommended for MSBuild)
+- **Windows** (primary platform, may work on other platforms)
 
-and the key of uri is the key, 
+## 📄 Attribution & License
 
-The key to send is like
+### 🙏 Original Work
+This project is a fork of the outstanding work by:
+- **[Saulius Menkevičius](https://github.com/razzmatazz)** - Original [csharp-language-server](https://github.com/razzmatazz/csharp-language-server)
 
-```lua 
-local params = {
-	timeout = 5000,
-	textDocument = {
-		uri = uri,
-	}
-}
-```
+### 🔧 Fork Enhancements
+- **[Zach Christmas](https://github.com/zachristmas)** - VS 2022 MSBuild support and lazy loading features
 
-The key of textDocument is needed. And timeout is just for neovim. It is the same if is expressed by json.
+### 📋 License
+This project maintains the same MIT license as the original work.
 
-### receiver
+### ⚠️ Support Notice
+**This is a fork with limited support.** For general language server issues not related to VS 2022 MSBuild or lazy loading, please check the [original project](https://github.com/razzmatazz/csharp-language-server) first.
 
-The object received is like 
+For issues specific to this fork's enhancements, please use the [fork's issue tracker](https://github.com/zachristmas/csharp-language-server/issues).
 
-```lua 
-{
-	projectName = "csharp-test",
-	assemblyName = "System.Runtime",
-	symbolName = "System.String",
-	source = "using System.Buffers;\n ...."
-}
-```
+## 🔗 Related Projects
 
-And In neovim, You receive the "result" above, you can get the decompile source from 
+- **Original Language Server**: [razzmatazz/csharp-language-server](https://github.com/razzmatazz/csharp-language-server)
+- **VS Code Extension Fork**: [zachristmas/vscode-csharp-ls-vs](https://github.com/zachristmas/vscode-csharp-ls-vs)
+- **Original VS Code Extension**: [vytautassurvila/vscode-csharp-ls](https://github.com/vytautassurvila/vscode-csharp-ls)
 
-```lua
+---
 
-local result, err = client.request_sync("csharp/metadata", params, 10000)
-local source
-if not err then
-	source = result.result.source	
-end
-```
-
-And there is a plugin of neovim for you to decompile it.
-
-[csharpls-extended-lsp.nvim](https://github.com/chen244/csharpls-extended-lsp.nvim)
+**Thank you to the original authors for their excellent foundation!** 🎉

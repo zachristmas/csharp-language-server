@@ -54,17 +54,19 @@ let entry args =
             ServerSettings.Default with
                 SolutionPath = serverArgs.TryGetResult(<@ Options.CLIArguments.Solution @>)
                 LogLevel = logLevelArg
+                MSBuildPath = serverArgs.TryGetResult(<@ Options.CLIArguments.MSBuildPath @>)
+                MSBuildExePath = serverArgs.TryGetResult(<@ Options.CLIArguments.MSBuildExePath @>)
         }
 
         Server.start settings
     with
     | :? ArguParseException as ex ->
-        printfn "%s" ex.Message
+        eprintfn "%s" ex.Message
 
         match ex.ErrorCode with
         | ErrorCode.HelpText -> 0
         | _ -> 1  // Unrecognised arguments
 
     | e ->
-        printfn "Server crashing error - %s \n %s" e.Message e.StackTrace
+        eprintfn "Server crashing error - %s \n %s" e.Message e.StackTrace
         3

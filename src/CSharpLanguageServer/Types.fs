@@ -8,11 +8,15 @@ type ServerSettings =
     { SolutionPath: string option
       LogLevel: string
       ApplyFormattingOptions: bool
+      MSBuildPath: string option
+      MSBuildExePath: string option
     }
     static member Default: ServerSettings =
         { SolutionPath = None
           LogLevel = "log"
           ApplyFormattingOptions = false
+          MSBuildPath = None
+          MSBuildExePath = None
         }
 
 type CSharpMetadataInformation =

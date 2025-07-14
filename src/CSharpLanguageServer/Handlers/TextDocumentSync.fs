@@ -132,20 +132,34 @@ module TextDocumentSync =
 
             match docFilePathMaybe with
             | Some docFilePath -> async {
-                // ok, this document is not in solution, register a new document
-                let! newDocMaybe =
-                    tryAddDocument
-                        logger
-                        docFilePath
-                        openParams.TextDocument.Text
-                        context.Solution
-
-                match newDocMaybe with
-                | Some newDoc ->
+                // Trigger lazy loading first
+                context.Emit(LazyLoadSolutionForDocument openParams.TextDocument.Uri)
+                
+                // Wait a moment for the solution to potentially load
+                do! Async.Sleep(100)
+                
+                // Try again to see if the document is now in a solution
+                match context.GetDocumentForUriOfType AnyDocument openParams.TextDocument.Uri with
+                | Some (doc, UserDocument) ->
+                    let updatedDoc = SourceText.From(openParams.TextDocument.Text) |> doc.WithText
                     context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
-                    context.Emit(SolutionChange newDoc.Project.Solution)
+                    context.Emit(SolutionChange updatedDoc.Project.Solution)
+                | _ ->
+                    // Document still not in any solution, try to add it manually
+                    let! newDocMaybe =
+                        tryAddDocument
+                            logger
+                            docFilePath
+                            openParams.TextDocument.Text
+                            context.Solution
 
-                | None -> ()
+                    match newDocMaybe with
+                    | Some newDoc ->
+                        context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
+                        context.Emit(SolutionChange newDoc.Project.Solution)
+                    | None -> 
+                        // Still couldn't add document, but register it for tracking
+                        context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
 
                 return Ok()
               }

@@ -4,18 +4,23 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
-    <Description>C# LSP language server</Description>
+    <Description>C# LSP language server with Visual Studio 2022 MSBuild support and lazy solution loading. Fork of csharp-language-server by Saulius Menkevičius with enhancements by Zach Christmas.</Description>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>csharp-ls</ToolCommandName>
-    <Authors>Saulius Menkevičius</Authors>
+    <Authors>Zach Christmas (Fork); Original: Saulius Menkevičius</Authors>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <PackageId>csharp-ls</PackageId>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageTags>csharp;lsp;roslyn</PackageTags>
-    <PackageProjectUrl>https://github.com/razzmatazz/csharp-language-server</PackageProjectUrl>
+    <PackageTags>csharp;lsp;roslyn;msbuild;visual-studio-2022;fork</PackageTags>
+    <PackageProjectUrl>https://github.com/zachristmas/csharp-language-server</PackageProjectUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <ChangelogFile>CHANGELOG.md</ChangelogFile>
+    <PackageReleaseNotes>FORK NOTICE: This is a fork of csharp-language-server by Saulius Menkevičius with enhancements for Visual Studio 2022 MSBuild support and lazy solution loading. Original project: https://github.com/razzmatazz/csharp-language-server. Support for this fork is limited - please check the original project for general issues.</PackageReleaseNotes>
+    <Copyright>Fork enhancements © 2024 Zach Christmas; Original © Saulius Menkevičius</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

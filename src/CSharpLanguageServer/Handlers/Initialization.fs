@@ -49,29 +49,96 @@ module Initialization =
         do! windowShowMessage(
             sprintf "csharp-ls: %s is released under MIT license and is not affiliated with Microsoft Corp.; see https://github.com/razzmatazz/csharp-language-server" serverName)
 
-        let vsInstanceQueryOpt = VisualStudioInstanceQueryOptions.Default
-        let vsInstanceList = MSBuildLocator.QueryVisualStudioInstances(vsInstanceQueryOpt)
-        if Seq.isEmpty vsInstanceList then
-            raise (InvalidOperationException("No instances of MSBuild could be detected." + Environment.NewLine + "Try calling RegisterInstance or RegisterMSBuildPath to manually register one."))
+        // Initialize MSBuild with custom configuration or auto-discovery
+        let initializeMSBuild() =
+            match context.State.Settings.MSBuildExePath with
+            | Some msbuildExePath when File.Exists(msbuildExePath) ->
+                logger.info(
+                    Log.setMessage "MSBuildLocator: registering custom MSBuild executable path: {msbuildExePath}"
+                    >> Log.addContext "msbuildExePath" msbuildExePath
+                )
+                let msbuildDir = Path.GetDirectoryName(msbuildExePath)
+                MSBuildLocator.RegisterMSBuildPath(msbuildDir)
 
-        // do! infoMessage "MSBuildLocator instances found:"
-        //
-        // for vsInstance in vsInstanceList do
-        //     do! infoMessage (sprintf "- SDK=\"%s\", Version=%s, MSBuildPath=\"%s\", DiscoveryType=%s"
-        //                              vsInstance.Name
-        //                              (string vsInstance.Version)
-        //                              vsInstance.MSBuildPath
-        //                              (string vsInstance.DiscoveryType))
+            | _ ->
+                match context.State.Settings.MSBuildPath with
+                | Some msbuildPath when Directory.Exists(msbuildPath) ->
+                    logger.info(
+                        Log.setMessage "MSBuildLocator: registering custom MSBuild path: {msbuildPath}"
+                        >> Log.addContext "msbuildPath" msbuildPath
+                    )
+                    MSBuildLocator.RegisterMSBuildPath(msbuildPath)
 
-        let vsInstance = vsInstanceList |> Seq.head
+                | _ ->
+                    // Try to use environment variables for Visual Studio 2022
+                    let vsInstallDir = Environment.GetEnvironmentVariable("VS170COMNTOOLS")
+                    let programFiles = Environment.GetEnvironmentVariable("ProgramFiles")
+                    let vs2022CommunityPath = 
+                        if not (String.IsNullOrEmpty(programFiles)) then
+                            Path.Combine(programFiles, "Microsoft Visual Studio", "2022", "Community", "MSBuild", "Current", "Bin")
+                        else 
+                            null
 
-        logger.info(
-            Log.setMessage "MSBuildLocator: will register \"{vsInstanceName}\", Version={vsInstanceVersion} as default instance"
-            >> Log.addContext "vsInstanceName" vsInstance.Name
-            >> Log.addContext "vsInstanceVersion" (string vsInstance.Version)
-        )
+                    let vs2022ProfessionalPath = 
+                        if not (String.IsNullOrEmpty(programFiles)) then
+                            Path.Combine(programFiles, "Microsoft Visual Studio", "2022", "Professional", "MSBuild", "Current", "Bin")
+                        else 
+                            null
 
-        MSBuildLocator.RegisterInstance(vsInstance)
+                    let customPathFound = 
+                        if not (String.IsNullOrEmpty(vsInstallDir)) then
+                            let msbuildPath = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(vsInstallDir)), "MSBuild", "Current", "Bin")
+                            if Directory.Exists(msbuildPath) then
+                                logger.info(
+                                    Log.setMessage "MSBuildLocator: using VS170COMNTOOLS environment variable path: {msbuildPath}"
+                                    >> Log.addContext "msbuildPath" msbuildPath
+                                )
+                                MSBuildLocator.RegisterMSBuildPath(msbuildPath)
+                                true
+                            else 
+                                false
+                        else if not (String.IsNullOrEmpty(vs2022CommunityPath)) && Directory.Exists(vs2022CommunityPath) then
+                            logger.info(
+                                Log.setMessage "MSBuildLocator: using Visual Studio 2022 Community path: {msbuildPath}"
+                                >> Log.addContext "msbuildPath" vs2022CommunityPath
+                            )
+                            MSBuildLocator.RegisterMSBuildPath(vs2022CommunityPath)
+                            true
+                        else if not (String.IsNullOrEmpty(vs2022ProfessionalPath)) && Directory.Exists(vs2022ProfessionalPath) then
+                            logger.info(
+                                Log.setMessage "MSBuildLocator: using Visual Studio 2022 Professional path: {msbuildPath}"
+                                >> Log.addContext "msbuildPath" vs2022ProfessionalPath
+                            )
+                            MSBuildLocator.RegisterMSBuildPath(vs2022ProfessionalPath)
+                            true
+                        else 
+                            false
+
+                    if not customPathFound then
+                        // Fall back to auto-discovery, but prefer VS 2022 instances
+                        let vsInstanceQueryOpt = VisualStudioInstanceQueryOptions.Default
+                        let vsInstanceList = MSBuildLocator.QueryVisualStudioInstances(vsInstanceQueryOpt)
+                        if Seq.isEmpty vsInstanceList then
+                            raise (InvalidOperationException("No instances of MSBuild could be detected." + Environment.NewLine + "Try calling RegisterInstance or RegisterMSBuildPath to manually register one."))
+
+                        // Prefer VS 2022 instances, then by version descending
+                        let vsInstance = 
+                            vsInstanceList
+                            |> Seq.sortByDescending (fun vi -> 
+                                let versionScore = if vi.Version.Major >= 17 then 1000 else 0  // VS 2022 is version 17.x
+                                let nameScore = if vi.Name.Contains("2022") then 100 else 0
+                                versionScore + nameScore + int vi.Version.Build)
+                            |> Seq.head
+
+                        logger.info(
+                            Log.setMessage "MSBuildLocator: will register \"{vsInstanceName}\", Version={vsInstanceVersion} as default instance"
+                            >> Log.addContext "vsInstanceName" vsInstance.Name
+                            >> Log.addContext "vsInstanceVersion" (string vsInstance.Version)
+                        )
+
+                        MSBuildLocator.RegisterInstance(vsInstance)
+
+        initializeMSBuild()
 
 (*
         logger.trace (
