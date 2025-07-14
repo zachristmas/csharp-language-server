@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Reported by @sharpchen in https://github.com/razzmatazz/csharp-language-server/issues/237
   - Fixed in https://github.com/razzmatazz/csharp-language-server/pull/238
 
+## FORK CHANGES (csharp-ls-vs)
+
+## [1.1.1] - 2025-01-23
+* Fixed executable name to match tool command name `csharp-ls-vs`
+* Added AssemblyName property to ensure correct binary name
+
+## [1.1.0] - 2025-01-23
+* Fork of csharp-language-server with Visual Studio MSBuild support
+* Added custom MSBuild path configuration (--msbuildpath, --msbuildexepath)
+* Implemented lazy solution loading based on active documents
+* Enhanced MSBuild detection with VS 2022+ preference
+* Fixed LSP communication issues with stdout pollution
+* Multi-solution workspace support
+* VS Code extension support for MSBuild configuration
+
 ## [0.18.0] - 2025-06-23 / Pabradė
 * Upgrade Roslyn to 4.14.0
 * Use diagnostic url from Roslyn

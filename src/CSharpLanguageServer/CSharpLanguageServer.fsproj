@@ -4,15 +4,16 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>csharp-ls-vs</AssemblyName>
     <Description>C# LSP language server with Visual Studio MSBuild support and lazy solution loading. Fork of csharp-language-server by Saulius Menkevičius with enhancements by Zach Christmas.</Description>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>csharp-ls-vs</ToolCommandName>
     <Authors>Zach Christmas (Fork); Original: Saulius Menkevičius</Authors>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <PackageId>csharp-ls-vs</PackageId>
-    <Version>1.1.0</Version>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <FileVersion>1.1.0.0</FileVersion>
+    <Version>1.1.1</Version>
+    <AssemblyVersion>1.1.1.0</AssemblyVersion>
+    <FileVersion>1.1.1.0</FileVersion>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>csharp;lsp;roslyn;msbuild;visual-studio;fork</PackageTags>
     <PackageProjectUrl>https://github.com/zachristmas/csharp-language-server</PackageProjectUrl>
