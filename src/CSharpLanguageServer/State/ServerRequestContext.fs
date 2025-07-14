@@ -9,6 +9,7 @@ open CSharpLanguageServer.Types
 open CSharpLanguageServer.RoslynHelpers
 open CSharpLanguageServer.Conversions
 open CSharpLanguageServer.Util
+open CSharpLanguageServer.Logging
 
 type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) =
     let mutable solutionMaybe = state.Solution
@@ -37,19 +38,40 @@ type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) 
 
     // Get all available solutions (main solution + lazy-loaded solutions)
     member _.GetAllSolutions () : Solution list =
+        let normalizePath (path: string) =
+            if System.String.IsNullOrEmpty(path) then ""
+            else System.IO.Path.GetFullPath(path).ToLowerInvariant().Replace('/', '\\')
+        
         let mainSolutions = 
             match solutionMaybe with
-            | Some solution -> [solution]
+            | Some solution -> [(solution, normalizePath solution.FilePath)]
             | None -> []
         
         let lazySolutions = 
             state.Solutions
             |> Map.toSeq
-            |> Seq.map (fun (_, solutionInfo) -> solutionInfo.Solution)
+            |> Seq.map (fun (_, solutionInfo) -> (solutionInfo.Solution, normalizePath solutionInfo.Solution.FilePath))
             |> List.ofSeq
         
-        mainSolutions @ lazySolutions
-        |> List.distinctBy (fun s -> s.FilePath)  // Avoid duplicates if main solution is also in lazy solutions
+        let allSolutions = mainSolutions @ lazySolutions
+        
+        // Remove duplicates based on normalized file paths
+        let uniqueSolutions = 
+            allSolutions
+            |> List.distinctBy snd  // distinct by normalized path
+            |> List.map fst         // extract just the solutions
+        
+        // Log if duplicates were found
+        if allSolutions.Length <> uniqueSolutions.Length then
+            let logger = LogProvider.getLoggerByName "GetAllSolutions"
+            logger.debug (
+                Log.setMessage "Removed {duplicateCount} duplicate solution(s). Total: {totalCount}, Unique: {uniqueCount}"
+                >> Log.addContext "duplicateCount" (allSolutions.Length - uniqueSolutions.Length)
+                >> Log.addContext "totalCount" allSolutions.Length
+                >> Log.addContext "uniqueCount" uniqueSolutions.Length
+            )
+        
+        uniqueSolutions
 
     member _.Emit ev =
         match ev with

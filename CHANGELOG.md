@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## FORK CHANGES (csharp-ls-vs)
 
+## [1.1.4] - 2025-01-24
+* Added SQL Server project (.sqlproj) support for loading and file watching
+* Fixed duplicate solution loading issue when opening VS Code
+* Improved solution path normalization and duplicate detection
+* Enhanced logging for duplicate solution detection and prevention
+
+## [1.1.3] - 2025-01-24
+* Fixed critical LSP handler registration issues causing "command not found" errors
+* Fixed References, Definition, Implementation, and TypeDefinition handlers registration
+* Fixed path normalization issues in multi-solution workspaces
+* Improved solution discovery with better Windows path handling
+
 ## [1.1.2] - 2025-01-24
 * Fixed multi-solution workspace support
 * Enhanced document resolution to search across all loaded solutions

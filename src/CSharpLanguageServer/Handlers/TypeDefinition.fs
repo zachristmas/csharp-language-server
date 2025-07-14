@@ -20,9 +20,8 @@ module TypeDefinition =
         |> Option.defaultValue false
 
     let provider (clientCapabilities: ClientCapabilities) : U3<bool,TypeDefinitionOptions,TypeDefinitionRegistrationOptions> option =
-        match dynamicRegistration clientCapabilities with
-        | true -> None
-        | false -> Some (U3.C1 true)
+        // Always provide the capability to ensure TypeDefinition works
+        Some (U3.C1 true)
 
     let registration (clientCapabilities: ClientCapabilities) : Registration option =
         match dynamicRegistration clientCapabilities with

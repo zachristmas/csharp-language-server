@@ -18,9 +18,8 @@ module Definition =
         |> Option.defaultValue false
 
     let provider (clientCapabilities: ClientCapabilities) : U2<bool, DefinitionOptions> option =
-        match dynamicRegistration clientCapabilities with
-        | true -> None
-        | false -> Some (U2.C1 true)
+        // Always provide the capability to ensure Definition works
+        Some (U2.C1 true)
 
     let registration (clientCapabilities: ClientCapabilities) : Registration option =
         match dynamicRegistration clientCapabilities with

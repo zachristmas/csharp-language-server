@@ -413,55 +413,71 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
             
             let solutionPathMaybe = findSolutionPathForDocument state.RootPath docFilePath
             match solutionPathMaybe with
-            | Some solutionPath when not (state.Solutions.ContainsKey solutionPath) ->
-                logger.info (
-                    Log.setMessage "Found solution to lazy load: {solutionPath} for document {documentUri}"
-                    >> Log.addContext "solutionPath" solutionPath
-                    >> Log.addContext "documentUri" documentUri
-                )
-                
-                // Load the solution asynchronously
-                async {
-                    try
-                        match state.LspClient with
-                        | Some lspClient ->
-                            let! solutionMaybe = tryLoadSolutionOnPath lspClient logger solutionPath
-                            match solutionMaybe with
-                            | Some solution ->
-                                logger.info (
-                                    Log.setMessage "Successfully lazy loaded solution {solutionPath} for document {documentUri}"
-                                    >> Log.addContext "solutionPath" solutionPath
-                                    >> Log.addContext "documentUri" documentUri
-                                )
-                                postSelf (SolutionAdd (solutionPath, solution))
-                            | None -> 
-                                logger.warn (
-                                    Log.setMessage "Failed to lazy load solution {solutionPath} for document {documentUri}"
-                                    >> Log.addContext "solutionPath" solutionPath
-                                    >> Log.addContext "documentUri" documentUri
-                                )
-                        | None -> 
-                            logger.error (
-                                Log.setMessage "No LSP client available for lazy loading solution {solutionPath}"
-                                >> Log.addContext "solutionPath" solutionPath
-                            )
-                    with
-                    | ex ->
-                        logger.error (
-                            Log.setMessage "Exception during lazy loading of solution {solutionPath} for document {documentUri}: {error}"
-                            >> Log.addContext "solutionPath" solutionPath
-                            >> Log.addContext "documentUri" documentUri
-                            >> Log.addContext "error" (string ex)
-                        )
-                } |> Async.Start
-                return state
             | Some solutionPath ->
-                logger.trace (
-                    Log.setMessage "Solution {solutionPath} already loaded for document {documentUri}"
-                    >> Log.addContext "solutionPath" solutionPath
-                    >> Log.addContext "documentUri" documentUri
-                )
-                return state
+                let normalizedSolutionPath = Path.GetFullPath(solutionPath).ToLowerInvariant().Replace('/', '\\')
+                
+                // Check if already loaded as main solution
+                let isMainSolution = 
+                    match state.Solution with
+                    | Some mainSolution when not (String.IsNullOrEmpty(mainSolution.FilePath)) ->
+                        let normalizedMainPath = Path.GetFullPath(mainSolution.FilePath).ToLowerInvariant().Replace('/', '\\')
+                        normalizedMainPath = normalizedSolutionPath
+                    | _ -> false
+                
+                // Check if already in lazy solutions
+                let isAlreadyLoaded = state.Solutions.ContainsKey solutionPath || isMainSolution
+                
+                if not isAlreadyLoaded then
+                    logger.info (
+                        Log.setMessage "Found solution to lazy load: {solutionPath} for document {documentUri}"
+                        >> Log.addContext "solutionPath" solutionPath
+                        >> Log.addContext "documentUri" documentUri
+                    )
+                    
+                    // Load the solution asynchronously
+                    async {
+                        try
+                            match state.LspClient with
+                            | Some lspClient ->
+                                let! solutionMaybe = tryLoadSolutionOnPath lspClient logger solutionPath
+                                match solutionMaybe with
+                                | Some solution ->
+                                    logger.info (
+                                        Log.setMessage "Successfully lazy loaded solution {solutionPath} for document {documentUri}"
+                                        >> Log.addContext "solutionPath" solutionPath
+                                        >> Log.addContext "documentUri" documentUri
+                                    )
+                                    postSelf (SolutionAdd (solutionPath, solution))
+                                | None -> 
+                                    logger.warn (
+                                        Log.setMessage "Failed to lazy load solution {solutionPath} for document {documentUri}"
+                                        >> Log.addContext "solutionPath" solutionPath
+                                        >> Log.addContext "documentUri" documentUri
+                                    )
+                            | None -> 
+                                logger.error (
+                                    Log.setMessage "No LSP client available for lazy loading solution {solutionPath}"
+                                    >> Log.addContext "solutionPath" solutionPath
+                                )
+                        with
+                        | ex ->
+                            logger.error (
+                                Log.setMessage "Exception during lazy loading of solution {solutionPath} for document {documentUri}: {error}"
+                                >> Log.addContext "solutionPath" solutionPath
+                                >> Log.addContext "documentUri" documentUri
+                                >> Log.addContext "error" (string ex)
+                            )
+                    } |> Async.Start
+                    return state
+                else
+                    let reason = if isMainSolution then "already loaded as main solution" else "already loaded as lazy solution"
+                    logger.trace (
+                        Log.setMessage "Solution {solutionPath} {reason} for document {documentUri}"
+                        >> Log.addContext "solutionPath" solutionPath
+                        >> Log.addContext "reason" reason
+                        >> Log.addContext "documentUri" documentUri
+                    )
+                    return state
             | None ->
                 logger.warn (
                     Log.setMessage "No solution file found for document {documentUri} in workspace root {rootPath}"

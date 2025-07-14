@@ -19,9 +19,8 @@ module References =
         |> Option.defaultValue false
 
     let provider (clientCapabilities: ClientCapabilities) : U2<bool, ReferenceOptions> option =
-        match dynamicRegistration clientCapabilities with
-        | true -> None
-        | false -> Some (U2.C1 true)
+        // Always provide the capability to ensure References work
+        Some (U2.C1 true)
 
     let registration (clientCapabilities: ClientCapabilities) : Registration option =
         match dynamicRegistration clientCapabilities with

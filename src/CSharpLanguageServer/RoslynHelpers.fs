@@ -643,13 +643,14 @@ let findAndLoadSolutionOnDir
             let projFiles =
                 let csprojFiles = Directory.GetFiles(dir, "*.csproj", SearchOption.AllDirectories)
                 let fsprojFiles = Directory.GetFiles(dir, "*.fsproj", SearchOption.AllDirectories)
+                let sqlprojFiles = Directory.GetFiles(dir, "*.sqlproj", SearchOption.AllDirectories)
 
-                [ csprojFiles; fsprojFiles ] |> Seq.concat
+                [ csprojFiles; fsprojFiles; sqlprojFiles ] |> Seq.concat
                                                 |> Seq.filter fileNotOnNodeModules
                                                 |> Seq.toList
 
             if projFiles.Length = 0 then
-                let message = "no or .csproj/.fsproj or sln files found on " + dir
+                let message = "no .csproj/.fsproj/.sqlproj or sln files found on " + dir
                 do! logMessage message
                 Exception message |> raise
 

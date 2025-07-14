@@ -30,7 +30,7 @@ module Workspace =
         | false -> None
         | true ->
             let fileSystemWatcher =
-                { GlobPattern = U2.C1 "**/*.{cs,csproj,sln,slnx}"
+                { GlobPattern = U2.C1 "**/*.{cs,csproj,fsproj,sqlproj,sln,slnx}"
                   Kind = Some (WatchKind.Create ||| WatchKind.Change ||| WatchKind.Delete) }
 
             let registerOptions: DidChangeWatchedFilesRegistrationOptions =
@@ -81,8 +81,8 @@ module Workspace =
             : Async<LspResult<unit>> = async {
         for change in p.Changes do
             match Path.GetExtension(change.Uri) with
-            | ".csproj" ->
-                do! context.WindowShowMessage "change to .csproj detected, will reload solution"
+            | ".csproj" | ".fsproj" | ".sqlproj" ->
+                do! context.WindowShowMessage "change to project file detected, will reload solution"
                 context.Emit(SolutionReloadRequest (TimeSpan.FromSeconds(5:int64)))
 
             | ".sln" | ".slnx" ->
