@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## FORK CHANGES (csharp-ls-vs)
 
+## [1.1.2] - 2025-01-24
+* Fixed multi-solution workspace support
+* Enhanced document resolution to search across all loaded solutions
+* Improved lazy solution loading with better error handling and logging
+* Fixed "No parent project could be resolved" error for files in different solutions
+* Added tryAddDocumentToAnySolution function for cross-solution document handling
+
 ## [1.1.1] - 2025-01-23
 * Fixed executable name to match tool command name `csharp-ls-vs`
 * Added AssemblyName property to ensure correct binary name

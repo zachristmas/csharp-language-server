@@ -175,24 +175,6 @@ let findSolutionPathForDocument (rootPath: string) (documentPath: string): strin
             )
             
             match solutionFiles with
-            | [solutionFile] -> 
-                logger.info (
-                    Log.setMessage "Found single solution file for document {documentPath}: {solutionFile}"
-                    >> Log.addContext "documentPath" documentPath
-                    >> Log.addContext "solutionFile" solutionFile
-                )
-                Some solutionFile
-            | multiple when multiple.Length > 1 ->
-                // Multiple solutions found - prefer the one with the most relevant name or use the first one
-                logger.info (
-                    Log.setMessage "Found {count} solution files for document {documentPath} in {directory}. Using first one: {selectedSolution}"
-                    >> Log.addContext "count" multiple.Length
-                    >> Log.addContext "documentPath" documentPath
-                    >> Log.addContext "directory" currentDir
-                    >> Log.addContext "selectedSolution" multiple.Head
-                    >> Log.addContext "allSolutions" (String.Join(", ", multiple))
-                )
-                Some multiple.Head
             | [] ->
                 let parentDir = Path.GetDirectoryName(currentDir)
                 if parentDir = currentDir then
@@ -203,6 +185,24 @@ let findSolutionPathForDocument (rootPath: string) (documentPath: string): strin
                     None
                 else
                     searchForSolution parentDir
+            | [solutionFile] -> 
+                logger.info (
+                    Log.setMessage "Found single solution file for document {documentPath}: {solutionFile}"
+                    >> Log.addContext "documentPath" documentPath
+                    >> Log.addContext "solutionFile" solutionFile
+                )
+                Some solutionFile
+            | multiple ->
+                // Multiple solutions found - prefer the one with the most relevant name or use the first one
+                logger.info (
+                    Log.setMessage "Found {count} solution files for document {documentPath} in {directory}. Using first one: {selectedSolution}"
+                    >> Log.addContext "count" multiple.Length
+                    >> Log.addContext "documentPath" documentPath
+                    >> Log.addContext "directory" currentDir
+                    >> Log.addContext "selectedSolution" multiple.Head
+                    >> Log.addContext "allSolutions" (String.Join(", ", multiple))
+                )
+                Some multiple.Head
     
     let documentDir = Path.GetDirectoryName(documentPath)
     logger.info (
