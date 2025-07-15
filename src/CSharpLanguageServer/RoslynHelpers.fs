@@ -378,6 +378,13 @@ type CSharpLspHostServices () =
         generator.CreateClassProxyWithTarget(services, interceptor)
 
 
+let isWorkspaceCompatibleProject (projectPath: string) =
+    let extension = Path.GetExtension(projectPath).ToLowerInvariant()
+    match extension with
+    | ".csproj" | ".fsproj" | ".vbproj" -> true
+    | ".sqlproj" -> false  // SQL Server projects use different project system
+    | _ -> false
+
 let loadProjectFilenamesFromSolution (solutionPath: string) =
     assert Path.IsPathRooted(solutionPath)
     let projectFilenames = new List<string>()
@@ -387,7 +394,10 @@ let loadProjectFilenamesFromSolution (solutionPath: string) =
         if project.ProjectType = Microsoft.Build.Construction.SolutionProjectType.KnownToBeMSBuildFormat then
             projectFilenames.Add(project.AbsolutePath)
 
-    projectFilenames |> Set.ofSeq
+    // Filter to only include workspace-compatible projects for MSBuildWorkspace
+    projectFilenames 
+    |> Seq.filter isWorkspaceCompatibleProject
+    |> Set.ofSeq
 
 
 type TfmCategory =
@@ -439,7 +449,10 @@ let selectMostCapableCompatibleTfm (tfms: string seq) : string option =
 let applyWorkspaceTargetFrameworkProp (logger: ILog) (projs: string seq) props =
     let tfms = new List<string>()
 
-    for projectFilename in projs do
+    // Only process workspace-compatible projects
+    let compatibleProjs = projs |> Seq.filter isWorkspaceCompatibleProject
+
+    for projectFilename in compatibleProjs do
         let projectCollection = new Microsoft.Build.Evaluation.ProjectCollection();
         let props = new Dictionary<string, string>();
 
@@ -563,10 +576,20 @@ let tryLoadSolutionFromProjectFiles
     let progress = ProgressReporter(lspClient)
 
     async {
-        do! progress.Begin($"Loading {projs.Length} project(s)...", false, $"0/{projs.Length}", 0u)
+        // Filter to only workspace-compatible projects for MSBuildWorkspace
+        let compatibleProjs = projs |> List.filter isWorkspaceCompatibleProject
+        let skippedCount = projs.Length - compatibleProjs.Length
+
+        if skippedCount > 0 then
+            logger.info (
+                Log.setMessage "Skipping {skippedCount} non-workspace-compatible project(s) (e.g., .sqlproj)"
+                >> Log.addContext "skippedCount" skippedCount
+            )
+
+        do! progress.Begin($"Loading {compatibleProjs.Length} workspace-compatible project(s)...", false, $"0/{compatibleProjs.Length}", 0u)
         let loadedProj = ref 0
 
-        let workspaceProps = resolveDefaultWorkspaceProps logger projs
+        let workspaceProps = resolveDefaultWorkspaceProps logger compatibleProjs
 
         if workspaceProps.Count > 0 then
             logger.info (
@@ -577,8 +600,8 @@ let tryLoadSolutionFromProjectFiles
         let msbuildWorkspace = MSBuildWorkspace.Create(workspaceProps, CSharpLspHostServices())
         msbuildWorkspace.LoadMetadataForReferencedProjects <- true
 
-        for file in projs do
-            if projs.Length < 10 then
+        for file in compatibleProjs do
+            if compatibleProjs.Length < 10 then
               do! logMessage (sprintf "loading project \"%s\".." file)
             try
                 do! msbuildWorkspace.OpenProjectAsync(file) |> Async.AwaitTask |> Async.Ignore
@@ -591,8 +614,8 @@ let tryLoadSolutionFromProjectFiles
             let projectFile = new FileInfo(file)
             let projName = projectFile.Name
             let loaded = Interlocked.Increment(loadedProj)
-            let percent = 100 * loaded / projs.Length |> uint
-            do! progress.Report(false, $"{projName} {loaded}/{projs.Length}", percent)
+            let percent = 100 * loaded / compatibleProjs.Length |> uint
+            do! progress.Report(false, $"{projName} {loaded}/{compatibleProjs.Length}", percent)
 
         for diag in msbuildWorkspace.Diagnostics do
             logger.trace (
@@ -600,7 +623,7 @@ let tryLoadSolutionFromProjectFiles
                 >> Log.addContext "message" (diag.ToString())
             )
 
-        do! progress.End (sprintf "OK, %d project file(s) loaded" projs.Length)
+        do! progress.End (sprintf "OK, %d workspace-compatible project file(s) loaded" compatibleProjs.Length)
 
         //workspace <- Some(msbuildWorkspace :> Workspace)
         return Some msbuildWorkspace.CurrentSolution
@@ -647,6 +670,7 @@ let findAndLoadSolutionOnDir
 
                 [ csprojFiles; fsprojFiles; sqlprojFiles ] |> Seq.concat
                                                 |> Seq.filter fileNotOnNodeModules
+                                                |> Seq.filter isWorkspaceCompatibleProject  // Filter out non-compatible projects like .sqlproj
                                                 |> Seq.toList
 
             if projFiles.Length = 0 then

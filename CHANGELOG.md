@@ -10,10 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## FORK CHANGES (csharp-ls-vs)
 
+## [1.1.6] - 2025-01-24
+* **MAJOR FIX**: Resolved SQL Server project (.sqlproj) compatibility issues that caused MSBuildWorkspace errors
+* Added `isWorkspaceCompatibleProject` helper to filter projects that can be loaded into Roslyn workspace
+* Fixed "Cannot open project because the file extension '.sqlproj' is not associated with a language" errors
+* SQL projects are now excluded from MSBuildWorkspace loading but still included in file watching and solution structure
+* Improved Visual Studio 2022-like experience for mixed solution types (C#/F#/SQL projects)
+* Enhanced project loading progress reporting to distinguish workspace-compatible vs total project counts
+
+## [1.1.5] - 2025-01-24
+* Fixed compilation errors in ServerRequestContext.fs with proper namespace qualifications for System.String and System.IO.Path
+* Enhanced VS Code extension duplicate solution detection with improved path normalization 
+* Fixed multiple duplicate "Loading solution" notifications when opening VS Code
+* Updated VS Code extension version constant to match language server version
+
 ## [1.1.4] - 2025-01-24
 * Added SQL Server project (.sqlproj) support for loading and file watching
-* Fixed duplicate solution loading issue when opening VS Code
-* Improved solution path normalization and duplicate detection
+* Fixed duplicate solution loading issue when opening VS Code by enhancing path normalization and duplicate detection in VS Code extension
+* Added .slnx support to VS Code extension solution discovery
+* Improved solution path normalization and duplicate detection on both server and client sides
 * Enhanced logging for duplicate solution detection and prevention
 
 ## [1.1.3] - 2025-01-24
