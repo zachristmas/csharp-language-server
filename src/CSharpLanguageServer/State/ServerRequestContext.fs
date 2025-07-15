@@ -165,43 +165,131 @@ type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) 
         this.FindSymbol' uri pos |> Async.map (Option.map fst)
 
     member private __._FindDerivedClasses (symbol: INamedTypeSymbol) (transitive: bool): Async<INamedTypeSymbol seq> = async {
-        match state.Solution with
-        | None -> return []
-        | Some currentSolution ->
+        // Get all available solutions (main + lazy-loaded)
+        let allSolutions = 
+            let mainSolutions = 
+                match state.Solution with
+                | Some solution -> [solution]
+                | None -> []
+            let lazySolutions = 
+                state.Solutions 
+                |> Map.toSeq 
+                |> Seq.map snd 
+                |> Seq.map (fun solutionInfo -> solutionInfo.Solution)
+                |> List.ofSeq
+            mainSolutions @ lazySolutions
+
+        if List.isEmpty allSolutions then
+            return []
+        else
             let! ct = Async.CancellationToken
-            return!
-                SymbolFinder.FindDerivedClassesAsync(symbol, currentSolution, transitive, cancellationToken=ct)
-                |> Async.AwaitTask
+            let! allDerivedClasses = 
+                allSolutions
+                |> List.map (fun solution ->
+                    SymbolFinder.FindDerivedClassesAsync(symbol, solution, transitive, cancellationToken=ct)
+                    |> Async.AwaitTask)
+                |> Async.Parallel
+            
+            return 
+                allDerivedClasses 
+                |> Seq.collect id
+                |> Seq.distinctBy (fun sym -> (Option.ofObj sym.ContainingAssembly |> Option.map (fun a -> a.Name), sym.ToDisplayString()))
     }
 
     member private __._FindDerivedInterfaces (symbol: INamedTypeSymbol) (transitive: bool):  Async<INamedTypeSymbol seq> = async {
-        match state.Solution with
-        | None -> return []
-        | Some currentSolution ->
+        // Get all available solutions (main + lazy-loaded)
+        let allSolutions = 
+            let mainSolutions = 
+                match state.Solution with
+                | Some solution -> [solution]
+                | None -> []
+            let lazySolutions = 
+                state.Solutions 
+                |> Map.toSeq 
+                |> Seq.map snd 
+                |> Seq.map (fun solutionInfo -> solutionInfo.Solution)
+                |> List.ofSeq
+            mainSolutions @ lazySolutions
+
+        if List.isEmpty allSolutions then
+            return []
+        else
             let! ct = Async.CancellationToken
-            return!
-                SymbolFinder.FindDerivedInterfacesAsync(symbol, currentSolution, transitive, cancellationToken=ct)
-                |> Async.AwaitTask
+            let! allDerivedInterfaces = 
+                allSolutions
+                |> List.map (fun solution ->
+                    SymbolFinder.FindDerivedInterfacesAsync(symbol, solution, transitive, cancellationToken=ct)
+                    |> Async.AwaitTask)
+                |> Async.Parallel
+            
+            return 
+                allDerivedInterfaces 
+                |> Seq.collect id
+                |> Seq.distinctBy (fun sym -> (Option.ofObj sym.ContainingAssembly |> Option.map (fun a -> a.Name), sym.ToDisplayString()))
     }
 
     member __.FindImplementations (symbol: ISymbol): Async<ISymbol seq> = async {
-        match state.Solution with
-        | None -> return []
-        | Some currentSolution ->
+        // Get all available solutions (main + lazy-loaded)
+        let allSolutions = 
+            let mainSolutions = 
+                match state.Solution with
+                | Some solution -> [solution]
+                | None -> []
+            let lazySolutions = 
+                state.Solutions 
+                |> Map.toSeq 
+                |> Seq.map snd 
+                |> Seq.map (fun solutionInfo -> solutionInfo.Solution)
+                |> List.ofSeq
+            mainSolutions @ lazySolutions
+
+        if List.isEmpty allSolutions then
+            return []
+        else
             let! ct = Async.CancellationToken
-            return!
-                SymbolFinder.FindImplementationsAsync(symbol, currentSolution, cancellationToken=ct)
-                |> Async.AwaitTask
+            let! allImplementations = 
+                allSolutions
+                |> List.map (fun solution ->
+                    SymbolFinder.FindImplementationsAsync(symbol, solution, cancellationToken=ct)
+                    |> Async.AwaitTask)
+                |> Async.Parallel
+            
+            return 
+                allImplementations 
+                |> Seq.collect id
+                |> Seq.distinctBy (fun sym -> (Option.ofObj sym.ContainingAssembly |> Option.map (fun a -> a.Name), sym.ToDisplayString()))
     }
 
     member __.FindImplementations' (symbol: INamedTypeSymbol) (transitive: bool): Async<INamedTypeSymbol seq> = async {
-        match state.Solution with
-        | None -> return []
-        | Some currentSolution ->
+        // Get all available solutions (main + lazy-loaded)
+        let allSolutions = 
+            let mainSolutions = 
+                match state.Solution with
+                | Some solution -> [solution]
+                | None -> []
+            let lazySolutions = 
+                state.Solutions 
+                |> Map.toSeq 
+                |> Seq.map snd 
+                |> Seq.map (fun solutionInfo -> solutionInfo.Solution)
+                |> List.ofSeq
+            mainSolutions @ lazySolutions
+
+        if List.isEmpty allSolutions then
+            return []
+        else
             let! ct = Async.CancellationToken
-            return!
-                SymbolFinder.FindImplementationsAsync(symbol, currentSolution, transitive, cancellationToken=ct)
-                |> Async.AwaitTask
+            let! allImplementations = 
+                allSolutions
+                |> List.map (fun solution ->
+                    SymbolFinder.FindImplementationsAsync(symbol, solution, transitive, cancellationToken=ct)
+                    |> Async.AwaitTask)
+                |> Async.Parallel
+            
+            return 
+                allImplementations 
+                |> Seq.collect id
+                |> Seq.distinctBy (fun sym -> (Option.ofObj sym.ContainingAssembly |> Option.map (fun a -> a.Name), sym.ToDisplayString()))
     }
 
     member this.FindDerivedClasses (symbol: INamedTypeSymbol): Async<INamedTypeSymbol seq> = this._FindDerivedClasses symbol true
@@ -211,13 +299,35 @@ type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) 
     member this.FindDerivedInterfaces' (symbol: INamedTypeSymbol) (transitive: bool):  Async<INamedTypeSymbol seq> = this._FindDerivedInterfaces symbol transitive
 
     member __.FindCallers (symbol: ISymbol): Async<SymbolCallerInfo seq> = async {
-        match state.Solution with
-        | None -> return []
-        | Some currentSolution ->
+        // Get all available solutions (main + lazy-loaded)
+        let allSolutions = 
+            let mainSolutions = 
+                match state.Solution with
+                | Some solution -> [solution]
+                | None -> []
+            let lazySolutions = 
+                state.Solutions 
+                |> Map.toSeq 
+                |> Seq.map snd 
+                |> Seq.map (fun solutionInfo -> solutionInfo.Solution)
+                |> List.ofSeq
+            mainSolutions @ lazySolutions
+
+        if List.isEmpty allSolutions then
+            return []
+        else
             let! ct = Async.CancellationToken
-            return!
-                SymbolFinder.FindCallersAsync(symbol, currentSolution, cancellationToken=ct)
-                |> Async.AwaitTask
+            let! allCallers = 
+                allSolutions
+                |> List.map (fun solution ->
+                    SymbolFinder.FindCallersAsync(symbol, solution, cancellationToken=ct)
+                    |> Async.AwaitTask)
+                |> Async.Parallel
+            
+            return 
+                allCallers 
+                |> Seq.collect id
+                |> Seq.distinctBy (fun caller -> (Option.ofObj caller.CallingSymbol.ContainingAssembly |> Option.map (fun a -> a.Name), caller.CallingSymbol.ToDisplayString()))
     }
 
     member this.ResolveTypeSymbolLocations
@@ -243,17 +353,53 @@ type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) 
                     let true' = System.Func<string, bool>(fun _ -> true)
                     fun (sln: Solution) -> SymbolFinder.FindSourceDeclarationsAsync(sln, true', SymbolFilter.TypeAndMember, cancellationToken=ct)
 
-        match this.State.Solution with
-        | None -> return []
-        | Some solution ->
+        // Get all available solutions (main + lazy-loaded)
+        let allSolutions = 
+            let mainSolutions = 
+                match this.State.Solution with
+                | Some solution -> [solution]
+                | None -> []
+            let lazySolutions = 
+                this.State.Solutions 
+                |> Map.toSeq 
+                |> Seq.map snd 
+                |> Seq.map (fun solutionInfo -> solutionInfo.Solution)
+                |> List.ofSeq
+            mainSolutions @ lazySolutions
+
+        if List.isEmpty allSolutions then
+            return []
+        else
             let! ct = Async.CancellationToken
-            return! findTask ct solution |> Async.AwaitTask
+            let! allSymbols = 
+                allSolutions
+                |> List.map (fun solution -> findTask ct solution |> Async.AwaitTask)
+                |> Async.Parallel
+            
+            return 
+                allSymbols 
+                |> Seq.collect id
+                |> Seq.distinctBy (fun sym -> (Option.ofObj sym.ContainingAssembly |> Option.map (fun a -> a.Name), sym.ToDisplayString()))
     }
 
     member this.FindReferences (symbol: ISymbol) (withDefinition: bool): Async<Microsoft.CodeAnalysis.Location seq> = async {
-        match this.State.Solution with
-        | None -> return []
-        | Some solution ->
+        // Get all available solutions (main + lazy-loaded)
+        let allSolutions = 
+            let mainSolutions = 
+                match this.State.Solution with
+                | Some solution -> [solution]
+                | None -> []
+            let lazySolutions = 
+                this.State.Solutions 
+                |> Map.toSeq 
+                |> Seq.map snd 
+                |> Seq.map (fun solutionInfo -> solutionInfo.Solution)
+                |> List.ofSeq
+            mainSolutions @ lazySolutions
+
+        if List.isEmpty allSolutions then
+            return []
+        else
             let! ct = Async.CancellationToken
 
             let locationsFromReferencedSym (r: ReferencedSymbol) =
@@ -263,11 +409,19 @@ type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) 
                 | true -> locations |> Seq.append r.Definition.Locations
                 | false -> locations
 
-            let! refs =
-                SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken=ct)
-                |> Async.AwaitTask
+            // Search across all solutions and combine results
+            let! allRefs = 
+                allSolutions
+                |> List.map (fun solution ->
+                    SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken=ct)
+                    |> Async.AwaitTask)
+                |> Async.Parallel
 
-            return refs |> Seq.collect locationsFromReferencedSym
+            return 
+                allRefs 
+                |> Seq.collect id
+                |> Seq.collect locationsFromReferencedSym
+                |> Seq.distinctBy (fun loc -> (Option.ofObj loc.SourceTree |> Option.map (fun st -> st.FilePath), loc.SourceSpan))
     }
 
     member this.GetDocumentVersion (uri: DocumentUri): int option =

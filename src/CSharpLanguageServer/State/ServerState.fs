@@ -52,6 +52,7 @@ and ServerState = {
     ClientCapabilities: ClientCapabilities
     Solution: Solution option  // Keep for backward compatibility
     Solutions: Map<string, SolutionInfo>  // Map of solution path to solution info
+    LoadingSolutions: Set<string>  // Track solution paths currently being loaded
     OpenDocs: Map<string, ServerOpenDocInfo>
     DecompiledMetadata: Map<string, DecompiledMetadataDocument>
     LastRequestId: int
@@ -98,6 +99,7 @@ let emptyServerState = { Settings = ServerSettings.Default
                          ClientCapabilities = emptyClientCapabilities
                          Solution = None
                          Solutions = Map.empty
+                         LoadingSolutions = Set.empty
                          OpenDocs = Map.empty
                          DecompiledMetadata = Map.empty
                          LastRequestId = 0
@@ -138,6 +140,7 @@ type ServerStateEvent =
     | PushDiagnosticsProcessPendingDocuments
     | PushDiagnosticsDocumentDiagnosticsResolution of Result<(string * int option * Diagnostic array), Exception>
     | PeriodicTimerTick
+    | SolutionLoadingComplete of string
 
 
 let findSolutionPathForDocument (rootPath: string) (documentPath: string): string option =
@@ -385,8 +388,9 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
         }
 
         let newSolutions = state.Solutions |> Map.add solutionPath solutionInfo
+        let newLoadingSolutions = state.LoadingSolutions |> Set.remove solutionPath
         postSelf PushDiagnosticsDocumentBacklogUpdate
-        return { state with Solutions = newSolutions }
+        return { state with Solutions = newSolutions; LoadingSolutions = newLoadingSolutions }
 
     | SolutionRemove solutionPath ->
         let newSolutions = state.Solutions |> Map.remove solutionPath
@@ -405,34 +409,56 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
         let docFilePathMaybe = tryParseFileUri documentUri
         match docFilePathMaybe with
         | Some docFilePath ->
-            logger.info (
-                Log.setMessage "Attempting lazy load of solution for document {documentUri} ({docFilePath})"
-                >> Log.addContext "documentUri" documentUri
-                >> Log.addContext "docFilePath" docFilePath
-            )
-            
             let solutionPathMaybe = findSolutionPathForDocument state.RootPath docFilePath
             match solutionPathMaybe with
             | Some solutionPath ->
-                let normalizedSolutionPath = Path.GetFullPath(solutionPath).ToLowerInvariant().Replace('/', '\\')
+                // Normalize the solution path for consistent comparison (handle both Windows and Unix paths)
+                let normalizePath (path: string) = 
+                    try
+                        let fullPath = Path.GetFullPath(path).ToLowerInvariant()
+                        let separatorChar = System.IO.Path.DirectorySeparatorChar.ToString()
+                        fullPath.Replace("/", separatorChar).Replace("\\", separatorChar)
+                    with
+                    | _ -> path.ToLowerInvariant()
+                
+                let normalizedSolutionPath = normalizePath solutionPath
                 
                 // Check if already loaded as main solution
                 let isMainSolution = 
                     match state.Solution with
                     | Some mainSolution when not (String.IsNullOrEmpty(mainSolution.FilePath)) ->
-                        let normalizedMainPath = Path.GetFullPath(mainSolution.FilePath).ToLowerInvariant().Replace('/', '\\')
+                        let normalizedMainPath = normalizePath mainSolution.FilePath
                         normalizedMainPath = normalizedSolutionPath
                     | _ -> false
                 
                 // Check if already in lazy solutions
-                let isAlreadyLoaded = state.Solutions.ContainsKey solutionPath || isMainSolution
+                let isAlreadyLoaded = 
+                    isMainSolution || 
+                    state.Solutions |> Map.exists (fun key _ -> 
+                        let normalizedKey = normalizePath key
+                        normalizedKey = normalizedSolutionPath)
                 
-                if not isAlreadyLoaded then
+                // Check if currently being loaded
+                let isCurrentlyLoading = 
+                    state.LoadingSolutions |> Set.exists (fun loadingPath ->
+                        let normalizedLoadingPath = normalizePath loadingPath
+                        normalizedLoadingPath = normalizedSolutionPath)
+                
+                if not isAlreadyLoaded && not isCurrentlyLoading then
+                    logger.info (
+                        Log.setMessage "Attempting lazy load of solution for document {documentUri} ({docFilePath})"
+                        >> Log.addContext "documentUri" documentUri
+                        >> Log.addContext "docFilePath" docFilePath
+                    )
+                    
                     logger.info (
                         Log.setMessage "Found solution to lazy load: {solutionPath} for document {documentUri}"
                         >> Log.addContext "solutionPath" solutionPath
                         >> Log.addContext "documentUri" documentUri
                     )
+                    
+                    // Mark as currently loading
+                    let updatedState = { state with LoadingSolutions = state.LoadingSolutions |> Set.add solutionPath }
                     
                     // Load the solution asynchronously
                     async {
@@ -448,17 +474,22 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                                         >> Log.addContext "documentUri" documentUri
                                     )
                                     postSelf (SolutionAdd (solutionPath, solution))
+                                    // Remove from loading set - this will be handled in SolutionAdd
                                 | None -> 
                                     logger.warn (
                                         Log.setMessage "Failed to lazy load solution {solutionPath} for document {documentUri}"
                                         >> Log.addContext "solutionPath" solutionPath
                                         >> Log.addContext "documentUri" documentUri
                                     )
+                                    // Remove from loading set
+                                    postSelf (SolutionLoadingComplete solutionPath)
                             | None -> 
                                 logger.error (
                                     Log.setMessage "No LSP client available for lazy loading solution {solutionPath}"
                                     >> Log.addContext "solutionPath" solutionPath
                                 )
+                                // Remove from loading set
+                                postSelf (SolutionLoadingComplete solutionPath)
                         with
                         | ex ->
                             logger.error (
@@ -467,10 +498,15 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                                 >> Log.addContext "documentUri" documentUri
                                 >> Log.addContext "error" (string ex)
                             )
+                            // Remove from loading set
+                            postSelf (SolutionLoadingComplete solutionPath)
                     } |> Async.Start
-                    return state
+                    return updatedState
                 else
-                    let reason = if isMainSolution then "already loaded as main solution" else "already loaded as lazy solution"
+                    let reason = 
+                        if isMainSolution then "already loaded as main solution" 
+                        elif isAlreadyLoaded then "already loaded as lazy solution"
+                        else "currently being loaded"
                     logger.trace (
                         Log.setMessage "Solution {solutionPath} {reason} for document {documentUri}"
                         >> Log.addContext "solutionPath" solutionPath
@@ -698,6 +734,10 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
 
         | false ->
             return state
+
+    | SolutionLoadingComplete solutionPath ->
+        let newLoadingSolutions = state.LoadingSolutions |> Set.remove solutionPath
+        return { state with LoadingSolutions = newLoadingSolutions }
 }
 
 let serverEventLoop initialState (inbox: MailboxProcessor<ServerStateEvent>) =
