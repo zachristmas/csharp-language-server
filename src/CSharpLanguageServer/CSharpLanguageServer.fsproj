@@ -11,9 +11,9 @@
     <Authors>Zach Christmas (Fork); Original: Saulius Menkevičius</Authors>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <PackageId>csharp-ls-vs</PackageId>
-    <Version>1.2.1</Version>
-    <AssemblyVersion>1.2.1.0</AssemblyVersion>
-    <FileVersion>1.2.1.0</FileVersion>
+    <Version>1.2.3</Version>
+    <AssemblyVersion>1.2.3.0</AssemblyVersion>
+    <FileVersion>1.2.3.0</FileVersion>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>csharp;lsp;roslyn;msbuild;visual-studio;fork</PackageTags>
     <PackageProjectUrl>https://github.com/zachristmas/csharp-language-server</PackageProjectUrl>

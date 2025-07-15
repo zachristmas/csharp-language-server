@@ -514,6 +514,9 @@ let tryLoadSolutionOnPath
         (solutionPath: string) =
     assert Path.IsPathRooted(solutionPath)
     let progress = ProgressReporter(lspClient)
+    
+    // Normalize the solution path for consistent display
+    let displayPath = solutionPath.Replace('\\', '/')
 
     let logMessage m =
         lspClient.WindowLogMessage({
@@ -529,9 +532,8 @@ let tryLoadSolutionOnPath
 
     async {
         try
-            let beginMessage = sprintf "Loading solution \"%s\"..." solutionPath
+            let beginMessage = sprintf "Loading solution \"%s\"..." displayPath
             do! progress.Begin(beginMessage)
-            do! logMessage beginMessage
 
             let projs = loadProjectFilenamesFromSolution solutionPath
             let workspaceProps = resolveDefaultWorkspaceProps logger projs
@@ -553,21 +555,21 @@ let tryLoadSolutionOnPath
                     >> Log.addContext "message" (diag.ToString())
                 )
 
+                // Remove duplicate logging - already logged above
                 // Only log warnings and errors to the client to reduce verbosity
-                match diag.Kind with
-                | Microsoft.CodeAnalysis.WorkspaceDiagnosticKind.Warning 
-                | Microsoft.CodeAnalysis.WorkspaceDiagnosticKind.Failure ->
-                    do! logMessage (sprintf "msbuildWorkspace.Diagnostics: %s" (diag.ToString()))
-                | _ -> ()
+                // match diag.Kind with
+                // | Microsoft.CodeAnalysis.WorkspaceDiagnosticKind.Warning 
+                // | Microsoft.CodeAnalysis.WorkspaceDiagnosticKind.Failure ->
+                //     do! logMessage (sprintf "msbuildWorkspace.Diagnostics: %s" (diag.ToString()))
+                // | _ -> ()
 
-            let endMessage = sprintf "Finished loading solution \"%s\"" solutionPath
+            let endMessage = sprintf "Finished loading solution \"%s\"" displayPath
             do! progress.End endMessage
-            do! logMessage endMessage
 
             return Some solution
         with
         | ex ->
-            let errorMessage = sprintf "Solution \"%s\" could not be loaded: %s" solutionPath (ex.ToString())
+            let errorMessage = sprintf "Solution \"%s\" could not be loaded: %s" displayPath (ex.ToString())
             do! progress.End errorMessage
             do! showMessage errorMessage
             return None

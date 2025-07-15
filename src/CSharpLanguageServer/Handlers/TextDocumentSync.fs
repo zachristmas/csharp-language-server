@@ -135,31 +135,50 @@ module TextDocumentSync =
                 // Trigger lazy loading first
                 context.Emit(LazyLoadSolutionForDocument openParams.TextDocument.Uri)
                 
-                // Wait a moment for the solution to potentially load
-                do! Async.Sleep(50)
+                // Wait longer for the solution to potentially load
+                // Check multiple times to see if loading has completed
+                let rec waitForSolution attempts = async {
+                    if attempts > 0 then
+                        do! Async.Sleep(100)  // Wait 100ms between attempts
+                        
+                        // Check if document is now in a solution
+                        match context.GetDocumentForUriOfType AnyDocument openParams.TextDocument.Uri with
+                        | Some (doc, UserDocument) -> return Some doc
+                        | _ -> return! waitForSolution (attempts - 1)
+                    else
+                        return None
+                }
                 
-                // Try again to see if the document is now in a solution
-                match context.GetDocumentForUriOfType AnyDocument openParams.TextDocument.Uri with
-                | Some (doc, UserDocument) ->
+                // Try up to 10 times (1 second total)
+                let! docMaybe = waitForSolution 10
+                
+                match docMaybe with
+                | Some doc ->
                     let updatedDoc = SourceText.From(openParams.TextDocument.Text) |> doc.WithText
                     context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
                     context.Emit(SolutionChange updatedDoc.Project.Solution)
-                | _ ->
-                    // Document still not in any solution, try to add it manually
+                | None ->
+                    // Document still not in any solution after waiting, check if we should try to add it
                     let allSolutions = context.GetAllSolutions()
-                    let! newDocMaybe =
-                        tryAddDocumentToAnySolution
-                            logger
-                            docFilePath
-                            openParams.TextDocument.Text
-                            allSolutions
+                    
+                    // Only try to add if we have loaded solutions
+                    if not (List.isEmpty allSolutions) then
+                        let! newDocMaybe =
+                            tryAddDocumentToAnySolution
+                                logger
+                                docFilePath
+                                openParams.TextDocument.Text
+                                allSolutions
 
-                    match newDocMaybe with
-                    | Some newDoc ->
-                        context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
-                        context.Emit(SolutionChange newDoc.Project.Solution)
-                    | None -> 
-                        // Still couldn't add document, but register it for tracking
+                        match newDocMaybe with
+                        | Some newDoc ->
+                            context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
+                            context.Emit(SolutionChange newDoc.Project.Solution)
+                        | None -> 
+                            // Still couldn't add document, but register it for tracking
+                            context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
+                    else
+                        // No solutions loaded yet, just register the document
                         context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
 
                 return Ok()

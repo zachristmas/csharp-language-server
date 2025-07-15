@@ -34,16 +34,7 @@ module Uri =
             "csharp:/metadata/" + path.Substring(metadataPrefix.Length)
         else
             let normalizedPath = normalizePath path
-            let uri = Uri(normalizedPath).ToString()
-            // Debug logging for URI generation
-            let logger = LogProvider.getLoggerByName "Uri"
-            logger.debug (
-                Log.setMessage "Generated URI: path={path}, normalized={normalized}, uri={uri}"
-                >> Log.addContext "path" path
-                >> Log.addContext "normalized" normalizedPath  
-                >> Log.addContext "uri" uri
-            )
-            uri
+            Uri(normalizedPath).ToString()
 
     let toWorkspaceFolder(uri: string): WorkspaceFolder =
         { Uri = uri

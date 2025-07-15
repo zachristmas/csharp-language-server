@@ -73,13 +73,21 @@ module References =
                 >> Log.addContext "symbolName" symbol.Name
             )
 
-            return
+            let results = 
                 locations
                 |> Seq.map Location.fromRoslynLocation
                 |> Seq.filter _.IsSome
                 |> Seq.map _.Value
                 |> Seq.distinct
                 |> Seq.toArray
+            
+            logger.info (
+                Log.setMessage "Returning {count} unique reference locations after filtering"
+                >> Log.addContext "count" results.Length
+            )
+
+            return
+                results
                 |> Some
                 |> LspResult.success
     }

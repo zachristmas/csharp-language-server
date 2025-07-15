@@ -43,13 +43,13 @@ let private normalizeSolutionPath (path: string) =
         let decodedPath = path.Replace("%3A", ":").Replace("%20", " ").Replace("%2F", "/")
         let fullPath = Path.GetFullPath(decodedPath)
         let normalized = fullPath.ToLowerInvariant()
-        // Ensure consistent directory separators (Windows uses \)
-        normalized.Replace('/', '\\').Replace("\\\\", "\\")
+        // Ensure consistent directory separators (always use forward slashes for comparison)
+        normalized.Replace('\\', '/')
     with
     | _ -> 
         // Fallback: at least normalize separators
         let decoded = path.Replace("%3A", ":").Replace("%20", " ").Replace("%2F", "/")
-        decoded.ToLowerInvariant().Replace('/', '\\').Replace("\\\\", "\\")
+        decoded.ToLowerInvariant().Replace('\\', '/')
 
 type ServerRequest = {
     Id: int
@@ -161,7 +161,7 @@ type ServerStateEvent =
 let findSolutionPathForDocument (rootPath: string) (documentPath: string): string option =
     let logger = LogProvider.getLoggerByName "findSolutionPathForDocument"
     
-    // Normalize paths to ensure consistent comparison
+    // Normalize both paths for consistent comparison
     let normalizeWindowsPath (path: string) =
         if path.StartsWith("\\") && path.Length > 3 && path.[2] = ':' then
             // Convert \c:\path to c:\path
@@ -218,12 +218,15 @@ let findSolutionPathForDocument (rootPath: string) (documentPath: string): strin
                 else
                     searchForSolution parentDir
             | [solutionFile] -> 
+                // Normalize the solution path before returning
+                let normalizedSolutionPath = normalizeSolutionPath solutionFile
                 logger.info (
-                    Log.setMessage "Found single solution file for document {documentPath}: {solutionFile}"
+                    Log.setMessage "Found single solution file for document {documentPath}: {solutionFile} (normalized: {normalizedPath})"
                     >> Log.addContext "documentPath" documentPath
                     >> Log.addContext "solutionFile" solutionFile
+                    >> Log.addContext "normalizedPath" normalizedSolutionPath
                 )
-                Some solutionFile
+                Some solutionFile  // Return original path; normalization will happen later
             | multiple ->
                 // Multiple solutions found - prefer the one with the most relevant name or use the first one
                 logger.info (
@@ -234,7 +237,7 @@ let findSolutionPathForDocument (rootPath: string) (documentPath: string): strin
                     >> Log.addContext "selectedSolution" multiple.Head
                     >> Log.addContext "allSolutions" (String.Join(", ", multiple))
                 )
-                Some multiple.Head
+                Some multiple.Head  // Return original path; normalization will happen later
     
     let documentDir = Path.GetDirectoryName(documentPath)
     logger.info (
@@ -429,6 +432,11 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
             return state
 
     | LazyLoadSolutionForDocument documentUri ->
+        logger.debug (
+            Log.setMessage "LazyLoadSolutionForDocument triggered for {documentUri}"
+            >> Log.addContext "documentUri" documentUri
+        )
+        
         let docFilePathMaybe = tryParseFileUri documentUri
         match docFilePathMaybe with
         | Some docFilePath ->
@@ -461,10 +469,17 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                 let isAlreadyLoaded = 
                     isMainSolution || state.Solutions.ContainsKey(normalizedSolutionPath)
                 
-                // Check if currently being loaded
+                // Check if currently being loaded (check both original and normalized paths for safety)
                 let isCurrentlyLoading = 
                     state.LoadingSolutions.Contains(normalizedSolutionPath) ||
                     state.LoadingSolutions.Contains(solutionPath)
+                
+                logger.debug (
+                    Log.setMessage "Loading check: isAlreadyLoaded={isAlreadyLoaded}, isCurrentlyLoading={isCurrentlyLoading}, LoadingSolutions={loadingSolutions}"
+                    >> Log.addContext "isAlreadyLoaded" isAlreadyLoaded
+                    >> Log.addContext "isCurrentlyLoading" isCurrentlyLoading
+                    >> Log.addContext "loadingSolutions" (String.concat ", " state.LoadingSolutions)
+                )
                 
                 if not isAlreadyLoaded && not isCurrentlyLoading then
                     logger.info (
@@ -479,8 +494,8 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                         >> Log.addContext "documentUri" documentUri
                     )
                     
-                    // Mark as currently loading (use normalized path)
-                    let updatedState = { state with LoadingSolutions = state.LoadingSolutions |> Set.add normalizedSolutionPath }
+                    // Mark as currently loading (add both original and normalized paths to prevent any duplicates)
+                    let updatedState = { state with LoadingSolutions = state.LoadingSolutions |> Set.add normalizedSolutionPath |> Set.add solutionPath }
                     
                     // Load the solution asynchronously
                     async {
@@ -576,14 +591,10 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                             |> Seq.exists (fun d -> d.FilePath = docFilePath)
                         if hasDocument then Some solutionPath else None)
                 | None ->
-                    // Document not in any loaded solution, try to find solution to load
+                    // Document not in any loaded solution, find solution path for tracking
                     let solutionPath = findSolutionPathForDocument state.RootPath docFilePath
-                    match solutionPath with
-                    | Some path when not (state.Solutions.ContainsKey path) ->
-                        // Trigger lazy loading
-                        postSelf (LazyLoadSolutionForDocument doc)
-                        solutionPath
-                    | _ -> solutionPath
+                    // Don't trigger lazy loading here since it should have been triggered by the caller
+                    solutionPath
             | None -> None
 
         let openDocInfo = { 
@@ -763,6 +774,12 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
             state.LoadingSolutions 
             |> Set.remove solutionPath 
             |> Set.remove normalizedSolutionPath
+        
+        logger.debug (
+            Log.setMessage "Solution loading complete: {solutionPath}, removing from LoadingSolutions"
+            >> Log.addContext "solutionPath" solutionPath
+        )
+        
         return { state with LoadingSolutions = newLoadingSolutions }
 }
 

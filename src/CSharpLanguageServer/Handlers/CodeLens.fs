@@ -153,7 +153,7 @@ module CodeLens =
 
     let resolve (context: ServerRequestContext)
                 (p: CodeLens)
-            : AsyncLspResult<CodeLens> = async {
+                : AsyncLspResult<CodeLens> = async {
         let lensData =
             p.Data
             |> Option.map (fun t -> t.ToObject<CodeLensData>())
@@ -164,25 +164,32 @@ module CodeLens =
             return p |> LspResult.success
         | Some symbol ->
             let! locations = context.FindReferences symbol false
-            // FIXME: refNum is wrong. There are lots of false positive even if we distinct locations by
-            // (l.SourceTree.FilePath, l.SourceSpan)
-            let refNum =
+            
+            // Convert Roslyn locations to LSP locations
+            let referenceLocations =
                 locations
-                |> Seq.distinctBy (fun l -> (l.GetMappedLineSpan().Path, l.SourceSpan))
-                |> Seq.length
-
+                |> Seq.map Location.fromRoslynLocation
+                |> Seq.filter _.IsSome
+                |> Seq.map _.Value
+                |> Seq.distinctBy (fun l -> (l.Uri, l.Range))
+                |> Array.ofSeq
+                
+            let refNum = referenceLocations.Length
             let title = sprintf "%d Reference(s)" refNum
 
+            // Use a custom command that the VS Code extension can handle
+            // This avoids type conversion issues with VS Code's built-in commands
             let arg: ReferenceParams =
                 { TextDocument = { Uri = lensData.DocumentUri }
                   Position = lensData.Position
                   WorkDoneToken = None
                   PartialResultToken = None
                   Context = { IncludeDeclaration = true } }
+                  
             let command =
                 { Title = title
-                  Command = "editor.action.showReferences"
-                  Arguments = Some [| lensData.DocumentUri |> serialize; lensData.Position |> serialize; arg |> serialize |] }
+                  Command = "csharp-ls.showReferences"
+                  Arguments = Some [| arg |> serialize |] }
 
             return { p with Command = Some command } |> LspResult.success
     }
