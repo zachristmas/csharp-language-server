@@ -132,42 +132,35 @@ module TextDocumentSync =
 
             match docFilePathMaybe with
             | Some docFilePath -> async {
-                // First try to see if the document is already in a loaded solution
+                // Trigger lazy loading first
+                context.Emit(LazyLoadSolutionForDocument openParams.TextDocument.Uri)
+                
+                // Wait a moment for the solution to potentially load
+                do! Async.Sleep(50)
+                
+                // Try again to see if the document is now in a solution
                 match context.GetDocumentForUriOfType AnyDocument openParams.TextDocument.Uri with
                 | Some (doc, UserDocument) ->
                     let updatedDoc = SourceText.From(openParams.TextDocument.Text) |> doc.WithText
                     context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
                     context.Emit(SolutionChange updatedDoc.Project.Solution)
                 | _ ->
-                    // Document not in any loaded solution, trigger lazy loading
-                    context.Emit(LazyLoadSolutionForDocument openParams.TextDocument.Uri)
-                    
-                    // Wait a brief moment for the solution to potentially load
-                    do! Async.Sleep(100)
-                    
-                    // Try again to see if the document is now in a solution
-                    match context.GetDocumentForUriOfType AnyDocument openParams.TextDocument.Uri with
-                    | Some (doc, UserDocument) ->
-                        let updatedDoc = SourceText.From(openParams.TextDocument.Text) |> doc.WithText
-                        context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
-                        context.Emit(SolutionChange updatedDoc.Project.Solution)
-                    | Some (_, _) | None ->
-                        // Document still not in any solution, try to add it manually to existing solutions
-                        let allSolutions = context.GetAllSolutions()
-                        let! newDocMaybe =
-                            tryAddDocumentToAnySolution
-                                logger
-                                docFilePath
-                                openParams.TextDocument.Text
-                                allSolutions
+                    // Document still not in any solution, try to add it manually
+                    let allSolutions = context.GetAllSolutions()
+                    let! newDocMaybe =
+                        tryAddDocumentToAnySolution
+                            logger
+                            docFilePath
+                            openParams.TextDocument.Text
+                            allSolutions
 
-                        match newDocMaybe with
-                        | Some newDoc ->
-                            context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
-                            context.Emit(SolutionChange newDoc.Project.Solution)
-                        | None -> 
-                            // Still couldn't add document, but register it for tracking
-                            context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
+                    match newDocMaybe with
+                    | Some newDoc ->
+                        context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
+                        context.Emit(SolutionChange newDoc.Project.Solution)
+                    | None -> 
+                        // Still couldn't add document, but register it for tracking
+                        context.Emit(OpenDocAdd (openParams.TextDocument.Uri, openParams.TextDocument.Version, DateTime.Now))
 
                 return Ok()
               }

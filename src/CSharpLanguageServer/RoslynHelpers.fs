@@ -553,7 +553,12 @@ let tryLoadSolutionOnPath
                     >> Log.addContext "message" (diag.ToString())
                 )
 
-                do! logMessage (sprintf "msbuildWorkspace.Diagnostics: %s" (diag.ToString()))
+                // Only log warnings and errors to the client to reduce verbosity
+                match diag.Kind with
+                | Microsoft.CodeAnalysis.WorkspaceDiagnosticKind.Warning 
+                | Microsoft.CodeAnalysis.WorkspaceDiagnosticKind.Failure ->
+                    do! logMessage (sprintf "msbuildWorkspace.Diagnostics: %s" (diag.ToString()))
+                | _ -> ()
 
             let endMessage = sprintf "Finished loading solution \"%s\"" solutionPath
             do! progress.End endMessage

@@ -5,6 +5,7 @@ open Ionide.LanguageServerProtocol.JsonRpc
 
 open CSharpLanguageServer.State
 
+
 [<RequireQualifiedAccess>]
 module ExecuteCommand =
     let provider (_cc: ClientCapabilities) : ExecuteCommandOptions option = None

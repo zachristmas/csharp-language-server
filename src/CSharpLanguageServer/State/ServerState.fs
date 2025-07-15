@@ -36,6 +36,21 @@ type ServerOpenDocInfo =
         SolutionPath: string option  // Track which solution this document belongs to
     }
 
+// Helper function to normalize solution paths consistently
+let private normalizeSolutionPath (path: string) = 
+    try
+        // First decode common URL encodings manually
+        let decodedPath = path.Replace("%3A", ":").Replace("%20", " ").Replace("%2F", "/")
+        let fullPath = Path.GetFullPath(decodedPath)
+        let normalized = fullPath.ToLowerInvariant()
+        // Ensure consistent directory separators (Windows uses \)
+        normalized.Replace('/', '\\').Replace("\\\\", "\\")
+    with
+    | _ -> 
+        // Fallback: at least normalize separators
+        let decoded = path.Replace("%3A", ":").Replace("%20", " ").Replace("%2F", "/")
+        decoded.ToLowerInvariant().Replace('/', '\\').Replace("\\\\", "\\")
+
 type ServerRequest = {
     Id: int
     Name: string
@@ -375,6 +390,7 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
         return { state with Solution = Some s }
 
     | SolutionAdd (solutionPath, solution) ->
+        let normalizedSolutionPath = normalizeSolutionPath solutionPath
         let projectPaths = 
             solution.Projects
             |> Seq.map (fun p -> p.FilePath)
@@ -382,25 +398,32 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
 
         let solutionInfo = {
             Solution = solution
-            SolutionPath = solutionPath
+            SolutionPath = solutionPath  // Keep original path for display purposes
             LastAccessed = DateTime.Now
             ProjectPaths = projectPaths
         }
 
-        let newSolutions = state.Solutions |> Map.add solutionPath solutionInfo
-        let newLoadingSolutions = state.LoadingSolutions |> Set.remove solutionPath
+        // Use normalized path as the map key for consistent lookups
+        let newSolutions = state.Solutions |> Map.add normalizedSolutionPath solutionInfo
+        // Remove from loading set using both original and normalized paths to handle both cases
+        let newLoadingSolutions = 
+            state.LoadingSolutions 
+            |> Set.remove solutionPath 
+            |> Set.remove normalizedSolutionPath
         postSelf PushDiagnosticsDocumentBacklogUpdate
         return { state with Solutions = newSolutions; LoadingSolutions = newLoadingSolutions }
 
     | SolutionRemove solutionPath ->
-        let newSolutions = state.Solutions |> Map.remove solutionPath
+        let normalizedSolutionPath = normalizeSolutionPath solutionPath
+        let newSolutions = state.Solutions |> Map.remove normalizedSolutionPath
         return { state with Solutions = newSolutions }
 
     | SolutionAccessUpdate (solutionPath, accessTime) ->
-        match state.Solutions |> Map.tryFind solutionPath with
+        let normalizedSolutionPath = normalizeSolutionPath solutionPath
+        match state.Solutions |> Map.tryFind normalizedSolutionPath with
         | Some solutionInfo ->
             let updatedSolutionInfo = { solutionInfo with LastAccessed = accessTime }
-            let newSolutions = state.Solutions |> Map.add solutionPath updatedSolutionInfo
+            let newSolutions = state.Solutions |> Map.add normalizedSolutionPath updatedSolutionInfo
             return { state with Solutions = newSolutions }
         | None ->
             return state
@@ -412,22 +435,7 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
             let solutionPathMaybe = findSolutionPathForDocument state.RootPath docFilePath
             match solutionPathMaybe with
             | Some solutionPath ->
-                // Normalize the solution path for consistent comparison (handle both Windows and Unix paths)
-                let normalizePath (path: string) = 
-                    try
-                        // First decode common URL encodings manually
-                        let decodedPath = path.Replace("%3A", ":").Replace("%20", " ").Replace("%2F", "/")
-                        let fullPath = Path.GetFullPath(decodedPath)
-                        let normalized = fullPath.ToLowerInvariant()
-                        // Ensure consistent directory separators (Windows uses \)
-                        normalized.Replace('/', '\\').Replace("\\\\", "\\")
-                    with
-                    | _ -> 
-                        // Fallback: at least normalize separators
-                        let decoded = path.Replace("%3A", ":").Replace("%20", " ").Replace("%2F", "/")
-                        decoded.ToLowerInvariant().Replace('/', '\\').Replace("\\\\", "\\")
-                
-                let normalizedSolutionPath = normalizePath solutionPath
+                let normalizedSolutionPath = normalizeSolutionPath solutionPath
                 
                 logger.debug (
                     Log.setMessage "Path normalization: original={original}, normalized={normalized}"
@@ -439,7 +447,7 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                 let isMainSolution = 
                     match state.Solution with
                     | Some mainSolution when not (String.IsNullOrEmpty(mainSolution.FilePath)) ->
-                        let normalizedMainPath = normalizePath mainSolution.FilePath
+                        let normalizedMainPath = normalizeSolutionPath mainSolution.FilePath
                         logger.debug (
                             Log.setMessage "Comparing with main solution: main={main}, normalized={normalized}, match={match}"
                             >> Log.addContext "main" mainSolution.FilePath
@@ -449,32 +457,14 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                         normalizedMainPath = normalizedSolutionPath
                     | _ -> false
                 
-                // Check if already in lazy solutions
+                // Check if already in lazy solutions (map keys are now normalized)
                 let isAlreadyLoaded = 
-                    isMainSolution || 
-                    state.Solutions |> Map.exists (fun key _ -> 
-                        let normalizedKey = normalizePath key
-                        let isMatch = normalizedKey = normalizedSolutionPath
-                        logger.debug (
-                            Log.setMessage "Comparing with lazy solution: lazy={lazy}, normalized={normalized}, match={match}"
-                            >> Log.addContext "lazy" key
-                            >> Log.addContext "normalized" normalizedKey
-                            >> Log.addContext "match" isMatch
-                        )
-                        isMatch)
+                    isMainSolution || state.Solutions.ContainsKey(normalizedSolutionPath)
                 
                 // Check if currently being loaded
                 let isCurrentlyLoading = 
-                    state.LoadingSolutions |> Set.exists (fun loadingPath ->
-                        let normalizedLoadingPath = normalizePath loadingPath
-                        let isMatch = normalizedLoadingPath = normalizedSolutionPath
-                        logger.debug (
-                            Log.setMessage "Comparing with loading solution: loading={loading}, normalized={normalized}, match={match}"
-                            >> Log.addContext "loading" loadingPath
-                            >> Log.addContext "normalized" normalizedLoadingPath
-                            >> Log.addContext "match" isMatch
-                        )
-                        isMatch)
+                    state.LoadingSolutions.Contains(normalizedSolutionPath) ||
+                    state.LoadingSolutions.Contains(solutionPath)
                 
                 if not isAlreadyLoaded && not isCurrentlyLoading then
                     logger.info (
@@ -489,8 +479,8 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                         >> Log.addContext "documentUri" documentUri
                     )
                     
-                    // Mark as currently loading
-                    let updatedState = { state with LoadingSolutions = state.LoadingSolutions |> Set.add solutionPath }
+                    // Mark as currently loading (use normalized path)
+                    let updatedState = { state with LoadingSolutions = state.LoadingSolutions |> Set.add normalizedSolutionPath }
                     
                     // Load the solution asynchronously
                     async {
@@ -768,7 +758,11 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
             return state
 
     | SolutionLoadingComplete solutionPath ->
-        let newLoadingSolutions = state.LoadingSolutions |> Set.remove solutionPath
+        let normalizedSolutionPath = normalizeSolutionPath solutionPath
+        let newLoadingSolutions = 
+            state.LoadingSolutions 
+            |> Set.remove solutionPath 
+            |> Set.remove normalizedSolutionPath
         return { state with LoadingSolutions = newLoadingSolutions }
 }
 
