@@ -9,6 +9,7 @@ open Microsoft.CodeAnalysis.Text
 open Ionide.LanguageServerProtocol.Types
 
 open CSharpLanguageServer.Util
+open CSharpLanguageServer.Logging
 
 module Uri =
     // Unescape some necessary char before passing string to Uri.
@@ -19,12 +20,30 @@ module Uri =
 
     let toPath (uri: string) = Uri.UnescapeDataString(Uri(unescape(uri)).LocalPath)
 
+    // Normalize path for consistent URI generation across different path formats
+    let private normalizePath (path: string) = 
+        try
+            // Get the full normalized path to ensure consistency
+            System.IO.Path.GetFullPath(path)
+        with
+        | _ -> path
+
     let fromPath (path: string) =
         let metadataPrefix = "$metadata$/"
         if path.StartsWith(metadataPrefix) then
             "csharp:/metadata/" + path.Substring(metadataPrefix.Length)
         else
-            Uri(path).ToString()
+            let normalizedPath = normalizePath path
+            let uri = Uri(normalizedPath).ToString()
+            // Debug logging for URI generation
+            let logger = LogProvider.getLoggerByName "Uri"
+            logger.debug (
+                Log.setMessage "Generated URI: path={path}, normalized={normalized}, uri={uri}"
+                >> Log.addContext "path" path
+                >> Log.addContext "normalized" normalizedPath  
+                >> Log.addContext "uri" uri
+            )
+            uri
 
     let toWorkspaceFolder(uri: string): WorkspaceFolder =
         { Uri = uri
@@ -69,24 +88,47 @@ module Range =
 
 module Location =
     let fromRoslynLocation (loc: Microsoft.CodeAnalysis.Location): option<Location> =
+        let logger = LogProvider.getLoggerByName "Location"
+        
         let toLspLocation (path: string) span: Location =
-            { Uri = path |> Path.toUri
+            let uri = path |> Path.toUri
+            logger.debug (
+                Log.setMessage "Converting location: path={path}, uri={uri}"
+                >> Log.addContext "path" path
+                >> Log.addContext "uri" uri
+            )
+            { Uri = uri
               Range = span |> Range.fromLinePositionSpan }
 
         match loc.Kind with
         | LocationKind.SourceFile ->
             let mappedLoc = loc.GetMappedLineSpan()
 
+            logger.debug (
+                Log.setMessage "Processing source location: mappedPath={mappedPath}, sourcePath={sourcePath}, mappedValid={mappedValid}"
+                >> Log.addContext "mappedPath" (if mappedLoc.IsValid then mappedLoc.Path else "invalid")
+                >> Log.addContext "sourcePath" (Option.ofObj loc.SourceTree |> Option.map (fun st -> st.FilePath) |> Option.defaultValue "null")
+                >> Log.addContext "mappedValid" mappedLoc.IsValid
+            )
+
             if mappedLoc.IsValid && File.Exists(mappedLoc.Path) then
                 toLspLocation mappedLoc.Path mappedLoc.Span
                 |> Some
-            elif File.Exists(loc.SourceTree.FilePath) then
+            elif Option.ofObj loc.SourceTree |> Option.exists (fun st -> File.Exists(st.FilePath)) then
                 toLspLocation loc.SourceTree.FilePath (loc.GetLineSpan().Span)
                 |> Some
             else
+                logger.warn (
+                    Log.setMessage "Could not find valid file path for location"
+                )
                 None
 
-        | _ -> None
+        | _ -> 
+            logger.debug (
+                Log.setMessage "Skipping non-source location: kind={kind}"
+                >> Log.addContext "kind" (loc.Kind.ToString())
+            )
+            None
 
 
 module TextEdit =

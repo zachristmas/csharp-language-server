@@ -9,9 +9,12 @@ open Ionide.LanguageServerProtocol.JsonRpc
 open CSharpLanguageServer.State
 open CSharpLanguageServer.Conversions
 open CSharpLanguageServer.Types
+open CSharpLanguageServer.Logging
 
 [<RequireQualifiedAccess>]
 module References =
+    let private logger = LogProvider.getLoggerByName "References"
+    
     let private dynamicRegistration (clientCapabilities: ClientCapabilities) =
         clientCapabilities.TextDocument
         |> Option.bind (fun x -> x.References)
@@ -38,10 +41,37 @@ module References =
                   RegisterOptions = registerOptions |> serialize |> Some }
 
     let handle (context: ServerRequestContext) (p: ReferenceParams) : AsyncLspResult<Location[] option> = async {
+        // Add debug logging
+        logger.info (
+            Log.setMessage "References requested for {uri} at position {line}:{character}"
+            >> Log.addContext "uri" p.TextDocument.Uri
+            >> Log.addContext "line" p.Position.Line
+            >> Log.addContext "character" p.Position.Character
+        )
+        
         match! context.FindSymbol p.TextDocument.Uri p.Position with
-        | None -> return None |> LspResult.success
+        | None -> 
+            logger.warn (
+                Log.setMessage "No symbol found at position {line}:{character} in {uri}"
+                >> Log.addContext "uri" p.TextDocument.Uri
+                >> Log.addContext "line" p.Position.Line
+                >> Log.addContext "character" p.Position.Character
+            )
+            return None |> LspResult.success
         | Some symbol ->
+            logger.info (
+                Log.setMessage "Found symbol {symbolName} of kind {symbolKind}, searching for references"
+                >> Log.addContext "symbolName" symbol.Name
+                >> Log.addContext "symbolKind" (symbol.Kind.ToString())
+            )
+            
             let! locations = context.FindReferences symbol p.Context.IncludeDeclaration
+            
+            logger.info (
+                Log.setMessage "Found {count} reference locations for symbol {symbolName}"
+                >> Log.addContext "count" (Seq.length locations)
+                >> Log.addContext "symbolName" symbol.Name
+            )
 
             return
                 locations

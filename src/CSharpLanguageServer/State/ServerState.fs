@@ -415,19 +415,37 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                 // Normalize the solution path for consistent comparison (handle both Windows and Unix paths)
                 let normalizePath (path: string) = 
                     try
-                        let fullPath = Path.GetFullPath(path).ToLowerInvariant()
-                        let separatorChar = System.IO.Path.DirectorySeparatorChar.ToString()
-                        fullPath.Replace("/", separatorChar).Replace("\\", separatorChar)
+                        // First decode common URL encodings manually
+                        let decodedPath = path.Replace("%3A", ":").Replace("%20", " ").Replace("%2F", "/")
+                        let fullPath = Path.GetFullPath(decodedPath)
+                        let normalized = fullPath.ToLowerInvariant()
+                        // Ensure consistent directory separators (Windows uses \)
+                        normalized.Replace('/', '\\').Replace("\\\\", "\\")
                     with
-                    | _ -> path.ToLowerInvariant()
+                    | _ -> 
+                        // Fallback: at least normalize separators
+                        let decoded = path.Replace("%3A", ":").Replace("%20", " ").Replace("%2F", "/")
+                        decoded.ToLowerInvariant().Replace('/', '\\').Replace("\\\\", "\\")
                 
                 let normalizedSolutionPath = normalizePath solutionPath
+                
+                logger.debug (
+                    Log.setMessage "Path normalization: original={original}, normalized={normalized}"
+                    >> Log.addContext "original" solutionPath
+                    >> Log.addContext "normalized" normalizedSolutionPath
+                )
                 
                 // Check if already loaded as main solution
                 let isMainSolution = 
                     match state.Solution with
                     | Some mainSolution when not (String.IsNullOrEmpty(mainSolution.FilePath)) ->
                         let normalizedMainPath = normalizePath mainSolution.FilePath
+                        logger.debug (
+                            Log.setMessage "Comparing with main solution: main={main}, normalized={normalized}, match={match}"
+                            >> Log.addContext "main" mainSolution.FilePath
+                            >> Log.addContext "normalized" normalizedMainPath
+                            >> Log.addContext "match" (normalizedMainPath = normalizedSolutionPath)
+                        )
                         normalizedMainPath = normalizedSolutionPath
                     | _ -> false
                 
@@ -436,13 +454,27 @@ let processServerEvent (logger: ILog) state postSelf msg : Async<ServerState> = 
                     isMainSolution || 
                     state.Solutions |> Map.exists (fun key _ -> 
                         let normalizedKey = normalizePath key
-                        normalizedKey = normalizedSolutionPath)
+                        let isMatch = normalizedKey = normalizedSolutionPath
+                        logger.debug (
+                            Log.setMessage "Comparing with lazy solution: lazy={lazy}, normalized={normalized}, match={match}"
+                            >> Log.addContext "lazy" key
+                            >> Log.addContext "normalized" normalizedKey
+                            >> Log.addContext "match" isMatch
+                        )
+                        isMatch)
                 
                 // Check if currently being loaded
                 let isCurrentlyLoading = 
                     state.LoadingSolutions |> Set.exists (fun loadingPath ->
                         let normalizedLoadingPath = normalizePath loadingPath
-                        normalizedLoadingPath = normalizedSolutionPath)
+                        let isMatch = normalizedLoadingPath = normalizedSolutionPath
+                        logger.debug (
+                            Log.setMessage "Comparing with loading solution: loading={loading}, normalized={normalized}, match={match}"
+                            >> Log.addContext "loading" loadingPath
+                            >> Log.addContext "normalized" normalizedLoadingPath
+                            >> Log.addContext "match" isMatch
+                        )
+                        isMatch)
                 
                 if not isAlreadyLoaded && not isCurrentlyLoading then
                     logger.info (
