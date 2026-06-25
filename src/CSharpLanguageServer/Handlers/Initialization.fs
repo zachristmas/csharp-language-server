@@ -3,6 +3,8 @@ namespace CSharpLanguageServer.Handlers
 open System
 open System.IO
 open System.Reflection
+open System.Collections.Generic
+open System.Xml.Linq
 
 open Microsoft.Build.Locator
 open Ionide.LanguageServerProtocol
@@ -18,6 +20,113 @@ open CSharpLanguageServer.Logging
 [<RequireQualifiedAccess>]
 module Initialization =
     let private logger = LogProvider.getLoggerByName "Initialization"
+
+    let private asmNs = XNamespace.Get "urn:schemas-microsoft-com:asm.v1"
+
+    // Set/insert binding redirects in the build host's .exe.config so its own code AND the
+    // (newer) VS MSBuild we copied in both bind to the present assembly versions.
+    let private updateBuildHostRedirects (cfgPath: string) (redirects: IDictionary<string, string * string>) =
+        let doc = XDocument.Load(cfgPath)
+        let runtime = doc.Root.Element(XName.Get "runtime")
+        if not (isNull runtime) then
+            let ab =
+                match runtime.Elements(asmNs + "assemblyBinding") |> Seq.tryHead with
+                | Some e -> e
+                | None ->
+                    let e = XElement(asmNs + "assemblyBinding")
+                    runtime.Add e
+                    e
+            for kv in redirects do
+                let name = kv.Key
+                let ver, tok = kv.Value
+                let depOpt =
+                    runtime.Elements(asmNs + "assemblyBinding")
+                    |> Seq.collect (fun b -> b.Elements(asmNs + "dependentAssembly"))
+                    |> Seq.tryFind (fun d ->
+                        let id = d.Element(asmNs + "assemblyIdentity")
+                        not (isNull id)
+                        && (let a = id.Attribute(XName.Get "name") in not (isNull a) && a.Value = name))
+                match depOpt with
+                | Some d ->
+                    let br = d.Element(asmNs + "bindingRedirect")
+                    if not (isNull br) then
+                        br.SetAttributeValue(XName.Get "oldVersion", "0.0.0.0-" + ver)
+                        br.SetAttributeValue(XName.Get "newVersion", ver)
+                | None ->
+                    ab.Add(
+                        XElement(asmNs + "dependentAssembly",
+                            XElement(asmNs + "assemblyIdentity",
+                                XAttribute(XName.Get "name", name),
+                                XAttribute(XName.Get "publicKeyToken", tok),
+                                XAttribute(XName.Get "culture", "neutral")),
+                            XElement(asmNs + "bindingRedirect",
+                                XAttribute(XName.Get "oldVersion", "0.0.0.0-" + ver),
+                                XAttribute(XName.Get "newVersion", ver))))
+            doc.Save cfgPath
+
+    // The net472 build host runs on .NET Framework, so it sees & picks the highest-version VS
+    // MSBuild. We run on .NET (Core), where MSBuildLocator.QueryVisualStudioInstances() returns
+    // only .NET SDK instances (never VS) -- so use vswhere to resolve the same VS MSBuild the
+    // build host will load.
+    let private findHighestVsMSBuildBin () : string option =
+        try
+            let vswhere =
+                Path.Combine(
+                    Environment.GetFolderPath Environment.SpecialFolder.ProgramFilesX86,
+                    "Microsoft Visual Studio", "Installer", "vswhere.exe")
+            if not (File.Exists vswhere) then None
+            else
+                let psi = System.Diagnostics.ProcessStartInfo(vswhere, "-latest -prerelease -products * -property installationPath")
+                psi.RedirectStandardOutput <- true
+                psi.UseShellExecute <- false
+                psi.CreateNoWindow <- true
+                use p = System.Diagnostics.Process.Start psi
+                let out = p.StandardOutput.ReadToEnd().Trim()
+                p.WaitForExit()
+                if String.IsNullOrWhiteSpace out then None
+                else
+                    let bin = Path.Combine(out, "MSBuild", "Current", "Bin")
+                    if Directory.Exists bin then Some bin else None
+        with _ -> None
+
+    // The build host ships older dependency assemblies (e.g. System.Collections.Immutable 9.x)
+    // pinned via binding redirects; loading a newer MSBuild (e.g. VS 2026 / v18, which needs
+    // Immutable 10.x) crashes in XMakeElements' type initializer. Align the build host's deps +
+    // redirects to that VS MSBuild so it can load. Idempotent (only copies when VS has a newer
+    // version) and best-effort (never fails startup).
+    let private alignBuildHostDependencies () =
+        try
+            match findHighestVsMSBuildBin () with
+            | None -> ()
+            | Some msbuildBin ->
+                let bhDir = Path.Combine(AppContext.BaseDirectory, "BuildHost-net472")
+                let cfg = Path.Combine(bhDir, "Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.exe.config")
+                if Directory.Exists bhDir && File.Exists cfg then
+                    let redirects = Dictionary<string, string * string>()
+                    for dll in Directory.GetFiles(bhDir, "*.dll") do
+                        let name = Path.GetFileName dll
+                        if not (name.StartsWith "Microsoft.CodeAnalysis") then
+                            let src = Path.Combine(msbuildBin, name)
+                            if File.Exists src then
+                                try
+                                    let sn = AssemblyName.GetAssemblyName src
+                                    let bn = AssemblyName.GetAssemblyName dll
+                                    if sn.Version > bn.Version then
+                                        File.Copy(src, dll, true)
+                                        let tok = sn.GetPublicKeyToken()
+                                        // strong-named (redirectable) and not MSBuild itself (keep its frozen 15.1.0.0)
+                                        if not (isNull tok) && tok.Length > 0 && not (sn.Name.StartsWith "Microsoft.Build") then
+                                            let tokStr = tok |> Array.map (fun b -> b.ToString "x2") |> String.concat ""
+                                            redirects.[sn.Name] <- (string sn.Version, tokStr)
+                                with _ -> ()
+                    if redirects.Count > 0 then
+                        updateBuildHostRedirects cfg redirects
+                        logger.info (
+                            Log.setMessage "Aligned net472 build host deps to {bin} ({count} assemblies)"
+                            >> Log.addContext "bin" msbuildBin
+                            >> Log.addContext "count" redirects.Count)
+        with ex ->
+            logger.warn (Log.setMessage (sprintf "Build host dependency alignment skipped: %s" ex.Message))
 
     let handleInitialize (lspClient: ILspClient)
                          (setupTimer: unit -> unit)
@@ -137,6 +246,10 @@ module Initialization =
                         )
 
                         MSBuildLocator.RegisterInstance(vsInstance)
+
+        // Align the out-of-process net472 build host's MSBuild deps to the VS it will load
+        // (must run before any solution load spawns the build host).
+        alignBuildHostDependencies()
 
         initializeMSBuild()
 
