@@ -10,6 +10,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## FORK CHANGES (csharp-ls-vs)
 
+## [1.2.5] - 2026-06-25
+### Changed
+- Documentation: populated the changelog and the NuGet README. No functional changes since 1.2.4.
+
+## [1.2.4] - 2026-06-25
+### Fixed
+- **Visual Studio 2026 / MSBuild v18 support.** The out-of-process .NET Framework (net472) build host crashed with a `Microsoft.Build.Shared.XMakeElements` `TypeInitializationException` when loading old-style .NET Framework solutions on machines where VS 2026 (MSBuild v18) was the highest-installed Visual Studio — its `.exe.config` pinned older dependency assemblies (e.g. `System.Collections.Immutable` 9.x) than v18's MSBuild requires.
+### Added
+- On startup the server aligns the net472 build host's MSBuild dependency assemblies and binding redirects to the installed Visual Studio MSBuild (resolved via `vswhere`). Idempotent and best-effort; a no-op when the shipped dependencies already satisfy the installed VS (e.g. VS 2022). Works with VS 2022 or 2026 — full IDE or Build Tools — on Windows.
+
 ## [1.1.6] - 2025-01-24
 * **MAJOR FIX**: Resolved SQL Server project (.sqlproj) compatibility issues that caused MSBuildWorkspace errors
 * Added `isWorkspaceCompatibleProject` helper to filter projects that can be loaded into Roslyn workspace

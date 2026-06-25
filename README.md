@@ -11,7 +11,7 @@ This is a fork of the excellent [csharp-language-server](https://github.com/razz
 ## 🚀 What's New in This Fork
 
 ### Visual Studio MSBuild Support
-- ✅ **Automatic detection** of Visual Studio Community/Professional installations
+- ✅ **Automatic detection** of the installed Visual Studio (2022 or 2026 — Community, Professional, or Build Tools) via vswhere
 - ✅ **Environment variable integration** (`VS170COMNTOOLS` and future versions)
 - ✅ **Custom MSBuild path configuration** options
 - ✅ **Intelligent fallback** to auto-discovery
@@ -50,7 +50,7 @@ csharp-ls-vs --msbuildexepath "C:\Program Files\Microsoft Visual Studio\2022\Com
 ```
 
 ### VS Code Integration
-Use with the companion VS Code extension: [csharp-ls-vs](https://marketplace.visualstudio.com/items?itemName=zachchristmas.csharp-ls-vs)
+Use with the companion VS Code extension: [csharp-ls-vs](https://marketplace.visualstudio.com/items?itemName=ZacharyChristmas.csharp-ls-vs)
 
 ## 🛠️ Requirements
 
@@ -84,3 +84,9 @@ For issues specific to this fork's enhancements, please use the [fork's issue tr
 ---
 
 **Thank you to the original authors for their excellent foundation!** 🎉
+
+## 📝 Changelog
+
+**1.2.4** — Visual Studio 2026 / MSBuild v18 support: the net472 build host now self-aligns its MSBuild dependencies to the installed Visual Studio at startup (via vswhere), fixing the `XMakeElements` crash when loading old-style .NET Framework solutions on machines with VS 2026. No-op on VS 2022.
+
+See the full [CHANGELOG](https://github.com/zachristmas/csharp-language-server/blob/main/CHANGELOG.md).
