@@ -13,13 +13,27 @@ type ProgressReporter(client: ILspClient) =
     member val Token = ProgressToken.C2 (Guid.NewGuid().ToString())
 
     member this.Begin(title, ?cancellable, ?message, ?percentage) = async {
-        let! progressCreateResult = client.WindowWorkDoneProgressCreate({ Token = this.Token })
+        // window/workDoneProgress/create is a server->client REQUEST. Some clients (e.g. Claude Code's
+        // LSP tool) never answer it, which would block the caller here indefinitely - and this runs on
+        // the solution-load path, so an unanswered progress-create stalls solution loading entirely.
+        // Race it against a short timeout: if the client doesn't ack, skip progress and proceed.
+        let! child =
+            Async.StartChild(
+                (async {
+                    try
+                        let! progressCreateResult = client.WindowWorkDoneProgressCreate({ Token = this.Token })
+                        return (match progressCreateResult with | Ok() -> true | Error _ -> false)
+                    with _ -> return false
+                }), 2000)
 
-        match progressCreateResult with
-        | Error _ ->
-            canReport <- false
-        | Ok() ->
-            canReport <- true
+        let! canCreate =
+            async {
+                try return! child
+                with _ -> return false
+            }
+
+        canReport <- canCreate
+        if canCreate then
             let param = WorkDoneProgressBegin.Create(
                 title = title,
                 ?cancellable = cancellable,

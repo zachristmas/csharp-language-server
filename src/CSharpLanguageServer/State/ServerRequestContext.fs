@@ -11,7 +11,7 @@ open CSharpLanguageServer.Conversions
 open CSharpLanguageServer.Util
 open CSharpLanguageServer.Logging
 
-type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) =
+type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent, getLiveDocument) =
     let mutable solutionMaybe = state.Solution
 
     member _.RequestId = requestId
@@ -150,8 +150,29 @@ type ServerRequestContext (requestId: int, state: ServerState, emitServerEvent) 
         return aggregatedLspLocations
     }
 
-    member this.FindSymbol' (uri: DocumentUri) (pos: Position): Async<(ISymbol * Document) option> = async {
+    /// Editors send textDocument/didOpen (which triggers lazy solution loading) before requests.
+    /// Request-only clients (e.g. Claude Code's LSP tool) do not, so on a cache miss we trigger the
+    /// load and poll LIVE actor state - the request-scoped `state` is a frozen snapshot that never
+    /// observes the async load - until the document's enclosing solution is loaded. This is what
+    /// enables auto-switching between solutions in a multi-solution workspace with no --solution pin.
+    member this.EnsureDocumentLoaded (uri: DocumentUri): Async<Document option> = async {
         match this.GetDocument uri with
+        | Some doc -> return Some doc
+        | None ->
+            this.Emit(LazyLoadSolutionForDocument uri)
+            let rec waitLive attempts = async {
+                match! getLiveDocument AnyDocument uri with
+                | Some doc -> return Some doc
+                | None when attempts > 0 ->
+                    do! Async.Sleep 250
+                    return! waitLive (attempts - 1)
+                | None -> return None
+            }
+            return! waitLive 240   // ~60s ceiling; cold MSBuild solution loads are slow
+    }
+
+    member this.FindSymbol' (uri: DocumentUri) (pos: Position): Async<(ISymbol * Document) option> = async {
+        match! this.EnsureDocumentLoaded uri with
         | None -> return None
         | Some doc ->
             let! ct = Async.CancellationToken

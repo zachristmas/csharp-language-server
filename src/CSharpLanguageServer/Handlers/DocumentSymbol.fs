@@ -316,7 +316,7 @@ module DocumentSymbol =
             |> Option.bind (fun cc -> cc.HierarchicalDocumentSymbolSupport)
             |> Option.defaultValue false
 
-        match context.GetDocument p.TextDocument.Uri with
+        match! context.EnsureDocumentLoaded p.TextDocument.Uri with
         | None -> return None |> LspResult.success
         | Some doc ->
             let! ct = Async.CancellationToken

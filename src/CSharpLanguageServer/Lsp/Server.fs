@@ -70,7 +70,7 @@ type CSharpLspServer(
 
             let! state = stateActor.PostAndAsyncReply(GetState)
 
-            let context = ServerRequestContext(requestId, state, stateActor.Post)
+            let context = ServerRequestContext(requestId, state, stateActor.Post, getDocumentForUriFromCurrentState)
 
             return! handlerFn context param
         }

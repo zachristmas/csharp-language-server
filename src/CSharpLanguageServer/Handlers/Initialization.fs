@@ -261,8 +261,13 @@ module Initialization =
 *)
         context.Emit(ClientCapabilityChange p.Capabilities)
 
-        // TODO use p.RootUri
-        let rootPath = Directory.GetCurrentDirectory()
+        // Anchor rootPath at the LSP workspace root (rootUri) so nearest-.sln discovery
+        // (findSolutionPathForDocument) is bounded by the real workspace - e.g. a monorepo root -
+        // rather than the server's process CWD. Falls back to CWD when rootUri is absent.
+        let rootPath =
+            p.RootUri
+            |> Option.bind CSharpLanguageServer.Util.tryParseFileUri
+            |> Option.defaultWith Directory.GetCurrentDirectory
         context.Emit(RootPathChange rootPath)
 
         // setup timer so actors get period ticks
@@ -290,69 +295,76 @@ module Initialization =
                 Log.setMessage "handleInitialized: \"initialized\" notification received from client"
             )
 
-            let registrationParams = { Registrations = getRegistrations context.ClientCapabilities |> List.toArray }
-
-            // TODO: Retry on error?
-            try
-                match! lspClient.ClientRegisterCapability registrationParams with
-                | Ok _ -> ()
-                | Error error ->
-                    logger.warn(
-                        Log.setMessage "handleInitialized: didChangeWatchedFiles registration has failed with {error}"
-                        >> Log.addContext "error" (string error)
-                    )
-            with
-            | ex ->
-                logger.warn(
-                    Log.setMessage "handleInitialized: didChangeWatchedFiles registration has failed with {error}"
-                    >> Log.addContext "error" (string ex)
-                )
-
             //
-            // retrieve csharp settings
-            //
-            try
-                let! workspaceCSharpConfig =
-                    lspClient.WorkspaceConfiguration(
-                        { Items=[| { Section=Some "csharp"; ScopeUri=None } |] })
-
-                let csharpConfigTokensMaybe =
-                    match workspaceCSharpConfig with
-                    | Ok ts -> Some ts
-                    | _ -> None
-
-                let newSettingsMaybe =
-                  match csharpConfigTokensMaybe with
-                  | Some [| t |] ->
-                      let csharpSettingsMaybe = t |> deserialize<ServerSettingsCSharpDto option>
-
-                      match csharpSettingsMaybe with
-                      | Some csharpSettings ->
-
-                          match csharpSettings.solution with
-                          | Some solutionPath-> Some { context.State.Settings with SolutionPath = Some solutionPath }
-                          | _ -> None
-
-                      | _ -> None
-                  | _ -> None
-
-                // do! logMessage (sprintf "handleInitialized: newSettingsMaybe=%s" (string newSettingsMaybe))
-
-                match newSettingsMaybe with
-                | Some newSettings ->
-                    context.Emit(SettingsChange newSettings)
-                | _ -> ()
-            with
-            | ex ->
-                logger.warn(
-                    Log.setMessage "handleInitialized: could not retrieve `csharp` workspace configuration section: {error}"
-                    >> Log.addContext "error" (ex |> string)
-                )
-
-            //
-            // start loading the solution
+            // Start loading the solution immediately. Do NOT gate this behind the client-dependent
+            // requests below: some LSP clients (e.g. Claude Code's LSP tool) never answer
+            // client/registerCapability or workspace/configuration, which would otherwise block here
+            // indefinitely so the solution would never load. If a `solution` setting arrives later via
+            // workspace/configuration, the resulting SettingsChange re-triggers a reload.
             //
             stateActor.Post(SolutionReloadRequest (TimeSpan.FromMilliseconds(100)))
+
+            // Register dynamic capabilities + fetch the `csharp` workspace configuration in the
+            // background, so an unresponsive client cannot stall initialization or solution loading.
+            Async.Start(
+                async {
+                    let registrationParams = { Registrations = getRegistrations context.ClientCapabilities |> List.toArray }
+
+                    // TODO: Retry on error?
+                    try
+                        match! lspClient.ClientRegisterCapability registrationParams with
+                        | Ok _ -> ()
+                        | Error error ->
+                            logger.warn(
+                                Log.setMessage "handleInitialized: didChangeWatchedFiles registration has failed with {error}"
+                                >> Log.addContext "error" (string error)
+                            )
+                    with
+                    | ex ->
+                        logger.warn(
+                            Log.setMessage "handleInitialized: didChangeWatchedFiles registration has failed with {error}"
+                            >> Log.addContext "error" (string ex)
+                        )
+
+                    //
+                    // retrieve csharp settings
+                    //
+                    try
+                        let! workspaceCSharpConfig =
+                            lspClient.WorkspaceConfiguration(
+                                { Items=[| { Section=Some "csharp"; ScopeUri=None } |] })
+
+                        let csharpConfigTokensMaybe =
+                            match workspaceCSharpConfig with
+                            | Ok ts -> Some ts
+                            | _ -> None
+
+                        let newSettingsMaybe =
+                          match csharpConfigTokensMaybe with
+                          | Some [| t |] ->
+                              let csharpSettingsMaybe = t |> deserialize<ServerSettingsCSharpDto option>
+
+                              match csharpSettingsMaybe with
+                              | Some csharpSettings ->
+
+                                  match csharpSettings.solution with
+                                  | Some solutionPath-> Some { context.State.Settings with SolutionPath = Some solutionPath }
+                                  | _ -> None
+
+                              | _ -> None
+                          | _ -> None
+
+                        match newSettingsMaybe with
+                        | Some newSettings ->
+                            context.Emit(SettingsChange newSettings)
+                        | _ -> ()
+                    with
+                    | ex ->
+                        logger.warn(
+                            Log.setMessage "handleInitialized: could not retrieve `csharp` workspace configuration section: {error}"
+                            >> Log.addContext "error" (ex |> string)
+                        )
+                })
 
             logger.trace(
                 Log.setMessage "handleInitialized: OK")
