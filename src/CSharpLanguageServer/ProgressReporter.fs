@@ -14,33 +14,27 @@ type ProgressReporter(client: ILspClient) =
 
     member this.Begin(title, ?cancellable, ?message, ?percentage) = async {
         // window/workDoneProgress/create is a server->client REQUEST. Some clients (e.g. Claude Code's
-        // LSP tool) never answer it, which would block the caller here indefinitely - and this runs on
-        // the solution-load path, so an unanswered progress-create stalls solution loading entirely.
-        // Race it against a short timeout: if the client doesn't ack, skip progress and proceed.
-        let! child =
-            Async.StartChild(
-                (async {
-                    try
-                        let! progressCreateResult = client.WindowWorkDoneProgressCreate({ Token = this.Token })
-                        return (match progressCreateResult with | Ok() -> true | Error _ -> false)
-                    with _ -> return false
-                }), 2000)
-
-        let! canCreate =
+        // LSP tool) never answer it. This runs on the solution-load path, so AWAITING it would stall
+        // solution loading indefinitely. Fire the create + begin-notification off DETACHED so the
+        // caller never blocks; progress still shows for clients that do answer, and is silently
+        // skipped for those that don't. Progress reporting is cosmetic, so a lost begin is harmless.
+        Async.Start(
             async {
-                try return! child
-                with _ -> return false
-            }
-
-        canReport <- canCreate
-        if canCreate then
-            let param = WorkDoneProgressBegin.Create(
-                title = title,
-                ?cancellable = cancellable,
-                ?message = message,
-                ?percentage = percentage
-            )
-            do! client.Progress({ Token = this.Token; Value = serialize param })
+                try
+                    let! progressCreateResult = client.WindowWorkDoneProgressCreate({ Token = this.Token })
+                    match progressCreateResult with
+                    | Ok() ->
+                        canReport <- true
+                        let param = WorkDoneProgressBegin.Create(
+                            title = title,
+                            ?cancellable = cancellable,
+                            ?message = message,
+                            ?percentage = percentage
+                        )
+                        do! client.Progress({ Token = this.Token; Value = serialize param })
+                    | Error _ -> ()
+                with _ -> ()
+            })
     }
 
     member this.Report(?cancellable, ?message, ?percentage) = async {
